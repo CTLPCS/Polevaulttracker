@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Pole Vault Tracker 1.0",
+    "slug": "polevault-tracker1.0",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/pole-vaulter.png",
+    "splash": {
+      "image": "./assets/pole-vaulter.png",              
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/pole-vaulter.png",
+        "backgroundColor": "#FFFFFF"
+      }
+    }
+  }
+}
