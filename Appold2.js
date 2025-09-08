@@ -64,6 +64,78 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import SplashScreen from './SplashScreen';
+import {
+  calcPR,
+  fmtBar,
+  fmtFeetIn,
+  fmtStandards,
+  fmtTakeoff,
+  fullName,
+  isRoutineHeader,
+  sessionSummaryText
+} from './yourUtils'; // adjust import as needed
+
+// Removed duplicate styles object to fix redeclaration error
+
+// Helper for pill style
+function getAttemptPillStyle(a) {
+  if (a.result === 'clear') {
+    return { backgroundColor: '#0a84ff', color: '#fff' };
+  }
+  if (a.selected) {
+    // Selected X: red background, white text, border
+    return { backgroundColor: '#c22', color: '#fff', borderColor: '#a00', borderWidth: 2 };
+  }
+  // Default X
+  return { backgroundColor: '#ffd7db', color: '#c22' };
+}
+
+function SessionDetailsScreen({ route, navigation }) {
+  const { id } = route.params;
+  const session = usePVStore((s) => s.sessions.find((x) => x.id === id));
+  const settings = usePVStore((s) => s.settings);
+  const { units, athlete } = settings;
+
+  if (!session) return (<Screen><Text>Session not found.</Text></Screen>);
+
+  const name = fullName(athlete);
+  const handleShare = async () => {
+    try {
+      const text = sessionSummaryText(session, settings, athlete);
+      await Share.share({ message: text });
+    } catch {
+      Alert.alert('Error', 'Could not open share sheet.');
+    }
+  };
+
+  // --- Place the helper here ---
+  function getAttemptPillStyle(a) {
+    if (a.result === 'clear') {
+      return { backgroundColor: '#0a84ff', color: '#fff' };
+    }
+    if (a.selected) {
+      // Selected X: red background, white text, optional border
+      return { backgroundColor: '#c22', color: '#fff', borderColor: '#a00', borderWidth: 2 };
+    }
+    // Default X
+    return { backgroundColor: '#ffd7db', color: '#c22' };
+  }
+
+  // ----- YOUR RETURN STATEMENT; JSX content -----
+  return (
+    <Screen>
+      <Section
+        title={`${name ? `${name} – ` : ''}${session.type === 'meet' ? 'Meet' : 'Practice'} – ${new Date(session.date).toLocaleDateString()}`}
+      >
+        {/* Your session details go here */}
+        <Text>Session Details</Text>
+      </Section>
+      <Row style={{ justifyContent: 'flex-end', marginBottom: 30 }}>
+        <ButtonPrimary title="Share" onPress={handleShare} />
+      </Row>
+    </Screen>
+  );
+}
 
 // -------------------- Utilities --------------------
 // Max feet for approach selector
@@ -94,8 +166,7 @@ const fromInches = (total) => {
 const shortId = () =>
   (global.crypto?.randomUUID ? global.crypto.randomUUID() : Math.random().toString(36).slice(2, 9));
 
-// Treat any routine string that ends with ":" as a section header (no checkbox)
-const isRoutineHeader = (s) => typeof s === 'string' && s.trim().endsWith(':');
+
 
 // -------------------- Static Weekly Plan --------------------
 const defaultWeeklyPlan = {
@@ -728,6 +799,35 @@ function SessionDetailsScreen({ route, navigation }) {
 
   return (
     <Screen>
+      {Array.isArray(session.heights) && session.heights.length > 0 && (
+        <Field label="Attempted Heights">
+          <View style={{ gap: 6 }}>
+            {session.heights.map((h, i) => (
+              <Row key={h.id || i} style={{ alignItems: 'center', gap: 8 }}>
+                <Pill text={fmtBar(h.heightIn, units)} />
+                {Array.isArray(h.attempts) && h.attempts.length > 0 && (
+                  <Row style={{ gap: 4 }}>
+                    {h.attempts
+                      .slice(
+                        0,
+                        h.attempts.findIndex(a => a.result === 'clear') === -1
+                          ? undefined
+                          : h.attempts.findIndex(a => a.result === 'clear') + 1
+                      )
+                      .map((a, idx) => (
+                        <Pill
+                          key={idx}
+                          text={a.result === 'clear' ? 'O' : 'X'}
+                          style={getAttemptPillStyle(a)}
+                        />
+                      ))}
+                  </Row>
+                )}
+              </Row>
+            ))}
+          </View>
+        </Field>
+      )}
       <Section
         title={`${name ? `${name} – ` : ''}${session.type === 'meet' ? 'Meet' : 'Practice'} – ${new Date(session.date).toLocaleDateString()}`}
       >
@@ -746,18 +846,11 @@ function SessionDetailsScreen({ route, navigation }) {
                         <Text style={styles.fieldLabel}>Bar: {fmtBar(attemptBlock.heightIn, units)}</Text>
                         <Row style={{ gap: 14 }}>
                           {shownAttempts.map((a, idx) => (
-                            <React.Fragment key={idx}>
-                              <Text style={{
-                                fontWeight: '700',
-                                color: a.result === 'clear' ? '#0a7' : '#c22',
-                                fontSize: 18,
-                              }}>
-                                {a.result === 'clear' ? 'O' : 'X'}
-                              </Text>
-                              <Text style={{ color: '#555', fontSize: 13 }}>
-                                {a.type === 'bungee' ? 'Bungee' : 'Bar'}
-                              </Text>
-                            </React.Fragment>
+                            <Pill
+                              key={idx}
+                              text={a.result === 'clear' ? 'O' : 'X'}
+                              style={getAttemptPillStyle(a)}
+                            />
                           ))}
                         </Row>
                       </View>
@@ -801,10 +894,7 @@ function SessionDetailsScreen({ route, navigation }) {
                             <Pill
                               key={idx}
                               text={a.result === 'clear' ? 'O' : 'X'}
-                              style={a.result === 'clear'
-                                ? { backgroundColor: '#0a84ff', color: '#fff' }
-                                : { backgroundColor: '#ffd7db', color: '#c22' }
-                              }
+                              style={getAttemptPillStyle(a)}
                             />
                           ))}
                         </Row>
@@ -2795,4 +2885,3 @@ function MainTabsWithProfileGate() {
     </>
   );
 }
-

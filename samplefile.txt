@@ -1,0 +1,9 @@
+{
+  "Sunday": { "goals": "Rest", "routine": ["Recovery jog 20 min", "Mobility & foam roll"] },
+  "Monday": { "goals": "Vault day", "routine": ["Drills:", "2× Sidestep hurdles"] },
+  "Tuesday": { "goals": "Sprint day", "routine": ["Sprint warm up"] },
+  "Wednesday": { "goals": "Vault day", "routine": ["Drills before vault"] },
+  "Thursday": { "goals": "Recovery", "routine": ["Jog", "Mobility"] },
+  "Friday": { "goals": "Sprint", "routine": ["Sprint warm up"] },
+  "Saturday": { "goals": "Lift", "routine": [] }
+}

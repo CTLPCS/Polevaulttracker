@@ -1381,55 +1381,41 @@ function PracticeFormScreen({ navigation }) {
         </Field>
         {/* Poles Section */}
         <Section title="Poles">
-  {poles.length === 0 ? (
-    <Text style={styles.muted}>No poles added yet.</Text>
-  ) : (
-    <>
-      {poles.map((pole, idx) => (
-        <View key={idx} style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={{ flexDirection: 'column' }}>
-            {pole.length ? (
-              <Text style={styles.pText}>
-                Length: {pole.length}
-              </Text>
-            ) : null}
-            {pole.weight ? (
-              <Text style={styles.pText}>
-                Weight: {pole.weight}
-              </Text>
-            ) : null}
-            {pole.flex ? (
-              <Text style={styles.pText}>
-                Flex: {pole.flex}
-              </Text>
-            ) : null}
-          </View>
-          <ButtonSecondary title="Edit" onPress={() => {
-            setEditPoleIdx(idx);
-            setPoleLength(pole.length);
-            setPoleFlex(pole.flex);
-            setPoleWeight(pole.weight);
-            setPoleModalOpen(true);
-          }} />
-          <ButtonSecondary title="Remove" onPress={() => {
-            setPoles(poles.filter((_, i) => i !== idx));
-          }} />
-        </View>
-      ))}
-    </>
-  )}
-  <ButtonPrimary
-    title="Add Pole"
-    onPress={() => {
-      setEditPoleIdx(null);
-      setPoleLength('');
-      setPoleFlex('');
-      setPoleWeight('');
-      setPoleModalOpen(true);
-    }}
-    style={{ alignSelf: 'flex-start' }}
-  />
-</Section>
+          {poles.length === 0 ? (
+            <Text style={styles.muted}>No poles added yet.</Text>
+          ) : (
+            poles.map((pole, idx) => (
+              <View key={idx} style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.pText}>
+                  {pole.length ? `Length: ${pole.length} ` : ''}
+                  {pole.flex ? `Flex: ${pole.flex} ` : ''}
+                  {pole.weight ? `Weight: ${pole.weight}` : ''}
+                </Text>
+                <ButtonSecondary title="Edit" onPress={() => {
+                  setEditPoleIdx(idx);
+                  setPoleLength(pole.length);
+                  setPoleFlex(pole.flex);
+                  setPoleWeight(pole.weight);
+                  setPoleModalOpen(true);
+                }} />
+                <ButtonSecondary title="Remove" onPress={() => {
+                  setPoles(poles.filter((_, i) => i !== idx));
+                }} />
+              </View>
+            ))
+          )}
+          <ButtonPrimary
+            title="Add Pole"
+            onPress={() => {
+              setEditPoleIdx(null);
+              setPoleLength('');
+              setPoleFlex('');
+              setPoleWeight('');
+              setPoleModalOpen(true);
+            }}
+            style={{ alignSelf: 'flex-start' }}
+          />
+        </Section>
         <Modal visible={poleModalOpen} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
@@ -2106,55 +2092,41 @@ function MeetFormScreen({ navigation }) {
         </Field>
         {/* Poles Section ABOVE Heights & Attempts, renamed to "Poles" */}
         <Section title="Poles">
-  {poles.length === 0 ? (
-    <Text style={styles.muted}>No poles added yet.</Text>
-  ) : (
-    <>
-      {poles.map((pole, idx) => (
-        <View key={idx} style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={{ flexDirection: 'column' }}>
-            {pole.length ? (
-              <Text style={styles.pText}>
-                Length: {pole.length}
-              </Text>
-            ) : null}
-            {pole.weight ? (
-              <Text style={styles.pText}>
-                Weight: {pole.weight}
-              </Text>
-            ) : null}
-            {pole.flex ? (
-              <Text style={styles.pText}>
-                Flex: {pole.flex}
-              </Text>
-            ) : null}
-          </View>
-          <ButtonSecondary title="Edit" onPress={() => {
-            setEditPoleIdx(idx);
-            setPoleLength(pole.length);
-            setPoleFlex(pole.flex);
-            setPoleWeight(pole.weight);
-            setPoleModalOpen(true);
-          }} />
-          <ButtonSecondary title="Remove" onPress={() => {
-            setPoles(poles.filter((_, i) => i !== idx));
-          }} />
-        </View>
-      ))}
-    </>
-  )}
-  <ButtonPrimary
-    title="Add Pole"
-    onPress={() => {
-      setEditPoleIdx(null);
-      setPoleLength('');
-      setPoleFlex('');
-      setPoleWeight('');
-      setPoleModalOpen(true);
-    }}
-    style={{ alignSelf: 'flex-start' }}
-  />
-</Section>
+          {poles.length === 0 ? (
+            <Text style={styles.muted}>No poles added yet.</Text>
+          ) : (
+            poles.map((pole, idx) => (
+              <View key={idx} style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.pText}>
+                  {pole.length ? `Length: ${pole.length} ` : ''}
+                  {pole.flex ? `Flex: ${pole.flex} ` : ''}
+                  {pole.weight ? `Weight: ${pole.weight}` : ''}
+                </Text>
+                <ButtonSecondary title="Edit" onPress={() => {
+                  setEditPoleIdx(idx);
+                  setPoleLength(pole.length);
+                  setPoleFlex(pole.flex);
+                  setPoleWeight(pole.weight);
+                  setPoleModalOpen(true);
+                }} />
+                <ButtonSecondary title="Remove" onPress={() => {
+                  setPoles(poles.filter((_, i) => i !== idx));
+                }} />
+              </View>
+            ))
+          )}
+          <ButtonPrimary
+            title="Add Pole"
+            onPress={() => {
+              setEditPoleIdx(null);
+              setPoleLength('');
+              setPoleFlex('');
+              setPoleWeight('');
+              setPoleModalOpen(true);
+            }}
+            style={{ alignSelf: 'flex-start' }}
+          />
+        </Section>
         <Modal visible={poleModalOpen} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>

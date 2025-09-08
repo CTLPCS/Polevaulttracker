@@ -64,6 +64,72 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import SplashScreen from './SplashScreen';
+import React from 'react';
+import { View, Text, Share, Alert } from 'react-native';
+import { usePVStore } from './yourStore'; // adjust import as needed
+import { Screen, Field, Section, Row, Pill, ButtonPrimary } from './YourUIComponents'; // adjust import as needed
+import {
+  fullName,
+  sessionSummaryText,
+  fmtBar,
+  fmtFeetIn,
+  fmtTakeoff,
+  fmtStandards,
+  calcPR,
+  isRoutineHeader
+} from './yourUtils'; // adjust import as needed
+
+const styles = {
+  muted: { color: '#888' },
+  pText: { fontSize: 15, color: '#222' },
+  fieldLabel: { fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  h2: { fontWeight: '700', fontSize: 18, marginTop: 3 }
+};
+
+// Helper for pill style
+function getAttemptPillStyle(a) {
+  if (a.result === 'clear') {
+    return { backgroundColor: '#0a84ff', color: '#fff' };
+  }
+  if (a.selected) {
+    // Selected X: red background, white text, border
+    return { backgroundColor: '#c22', color: '#fff', borderColor: '#a00', borderWidth: 2 };
+  }
+  // Default X
+  return { backgroundColor: '#ffd7db', color: '#c22' };
+}
+
+function SessionDetailsScreen({ route, navigation }) {
+  const { id } = route.params;
+  const session = usePVStore((s) => s.sessions.find((x) => x.id === id));
+  const settings = usePVStore((s) => s.settings);
+  const { units, athlete } = settings;
+
+  if (!session) return (<Screen><Text>Session not found.</Text></Screen>);
+
+  const name = fullName(athlete);
+  const handleShare = async () => {
+    try {
+      const text = sessionSummaryText(session, settings, athlete);
+      await Share.share({ message: text });
+    } catch {
+      Alert.alert('Error', 'Could not open share sheet.');
+    }
+  };
+
+
+// --- Place the helper here ---
+function getAttemptPillStyle(a) {
+  if (a.result === 'clear') {
+    return { backgroundColor: '#0a84ff', color: '#fff' };
+  }
+  if (a.selected) {
+    // Selected X: red background, white text, optional border
+    return { backgroundColor: '#c22', color: '#fff', borderColor: '#a00', borderWidth: 2 };
+  }
+  // Default X
+  return { backgroundColor: '#ffd7db', color: '#c22' };
+}
 
 // -------------------- Utilities --------------------
 // Max feet for approach selector
@@ -728,6 +794,35 @@ function SessionDetailsScreen({ route, navigation }) {
 
   return (
     <Screen>
+      {Array.isArray(session.heights) && session.heights.length > 0 && (
+        <Field label="Attempted Heights">
+          <View style={{ gap: 6 }}>
+            {session.heights.map((h, i) => (
+              <Row key={h.id || i} style={{ alignItems: 'center', gap: 8 }}>
+                <Pill text={fmtBar(h.heightIn, units)} />
+                {Array.isArray(h.attempts) && h.attempts.length > 0 && (
+                  <Row style={{ gap: 4 }}>
+                    {h.attempts
+                      .slice(
+                        0,
+                        h.attempts.findIndex(a => a.result === 'clear') === -1
+                          ? undefined
+                          : h.attempts.findIndex(a => a.result === 'clear') + 1
+                      )
+                      .map((a, idx) => (
+                        <Pill
+                          key={idx}
+                          text={a.result === 'clear' ? 'O' : 'X'}
+                          style={getAttemptPillStyle(a)}
+                        />
+                      ))}
+                  </Row>
+                )}
+              </Row>
+            ))}
+          </View>
+        </Field>
+      )}
       <Section
         title={`${name ? `${name} – ` : ''}${session.type === 'meet' ? 'Meet' : 'Practice'} – ${new Date(session.date).toLocaleDateString()}`}
       >
@@ -746,18 +841,11 @@ function SessionDetailsScreen({ route, navigation }) {
                         <Text style={styles.fieldLabel}>Bar: {fmtBar(attemptBlock.heightIn, units)}</Text>
                         <Row style={{ gap: 14 }}>
                           {shownAttempts.map((a, idx) => (
-                            <React.Fragment key={idx}>
-                              <Text style={{
-                                fontWeight: '700',
-                                color: a.result === 'clear' ? '#0a7' : '#c22',
-                                fontSize: 18,
-                              }}>
-                                {a.result === 'clear' ? 'O' : 'X'}
-                              </Text>
-                              <Text style={{ color: '#555', fontSize: 13 }}>
-                                {a.type === 'bungee' ? 'Bungee' : 'Bar'}
-                              </Text>
-                            </React.Fragment>
+                            <Pill
+                              key={idx}
+                              text={a.result === 'clear' ? 'O' : 'X'}
+                              style={getAttemptPillStyle(a)}
+                            />
                           ))}
                         </Row>
                       </View>
@@ -801,10 +889,7 @@ function SessionDetailsScreen({ route, navigation }) {
                             <Pill
                               key={idx}
                               text={a.result === 'clear' ? 'O' : 'X'}
-                              style={a.result === 'clear'
-                                ? { backgroundColor: '#0a84ff', color: '#fff' }
-                                : { backgroundColor: '#ffd7db', color: '#c22' }
-                              }
+                              style={getAttemptPillStyle(a)}
                             />
                           ))}
                         </Row>
