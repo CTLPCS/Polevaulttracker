@@ -46,7 +46,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Image,
@@ -66,6 +66,8 @@ import SplashScreen from './SplashScreen';
 import VideoScreen from './VideoScreen';
 import { DropdownModal, SimpleDropdown } from './components';
 import { usePVStore } from './store';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { VideoView } from 'expo-video';
 
 // -------------------- Utilities --------------------
 // Max feet for approach selector
@@ -787,6 +789,9 @@ function PracticeFormScreen({ navigation }) {
   const add = usePVStore((s) => s.addSession);
   const plan = usePVStore((s) => s.weeklyPlan);
   const allSessions = usePVStore((s) => s.sessions);
+  const addAttemptVideo = usePVStore((s) => s.addAttemptVideo);
+  const getAttemptVideos = usePVStore((s) => s.getAttemptVideos);
+  const deleteAttemptVideo = usePVStore((s) => s.deleteAttemptVideo);
 
   const dayNameStr = todayName();
   const dayPlan = plan[dayNameStr] || { goals: '', routine: [] };
@@ -891,6 +896,97 @@ function PracticeFormScreen({ navigation }) {
   }, []);
 
   const [notes, setNotes] = useState('');
+
+  // Video modal state
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [videoModalClips, setVideoModalClips] = useState([]);
+  const [videoModalHeading, setVideoModalHeading] = useState('');
+
+  // Camera permissions and recording state
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const [showCamera, setShowCamera] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedUri, setRecordedUri] = useState(null);
+  const cameraRef = useRef(null);
+
+  // Video modal functions
+  function openVideoModal(clips, heading) {
+    setVideoModalClips(clips);
+    setVideoModalHeading(heading);
+    setVideoModalOpen(true);
+  }
+  
+  function closeVideoModal() {
+    setVideoModalOpen(false);
+    setVideoModalClips([]);
+    setVideoModalHeading('');
+  }
+
+  // Handle recording video for an attempt
+  async function handleRecordVideo(heightObj, attemptIdx) {
+    if (!camPerm?.granted) {
+      const res = await requestCamPerm();
+      if (!res?.granted) {
+        Alert.alert('Permission required', 'Camera access is required to record video.');
+        return;
+      }
+    }
+    if (!micPerm?.granted) {
+      const resMic = await requestMicPerm();
+      if (!resMic?.granted) {
+        Alert.alert('Permission required', 'Microphone access is required to record video with audio.');
+        return;
+      }
+    }
+    setShowCamera({ heightObj, attemptIdx });
+    setRecordedUri(null);
+    setIsRecording(false);
+  }
+
+  // Toggle video recording
+  async function onToggleRecord() {
+    if (!cameraRef.current) return;
+    if (!isRecording) {
+      setIsRecording(true);
+      try {
+        const result = await cameraRef.current.recordAsync();
+        if (result?.uri) setRecordedUri(result.uri);
+      } catch (e) {
+        Alert.alert('Error', `Could not record video:\n${e?.message || e}`);
+      } finally {
+        setIsRecording(false);
+      }
+    } else {
+      try {
+        cameraRef.current.stopRecording();
+      } catch {}
+    }
+  }
+
+  // Save recorded video
+  function onSaveRecorded() {
+    if (!recordedUri || !showCamera) return;
+    
+    // Delete any existing video for this attempt (only one video per attempt)
+    const existingClips = getAttemptVideos(date, showCamera.heightObj.heightIn, showCamera.attemptIdx + 1);
+    existingClips.forEach(clip => {
+      deleteAttemptVideo(date, showCamera.heightObj.heightIn, showCamera.attemptIdx + 1, clip.id);
+    });
+    
+    // Add the new video
+    addAttemptVideo(
+      date,
+      showCamera.heightObj.heightIn,
+      showCamera.attemptIdx + 1,
+      recordedUri,
+      `Practice Video ${new Date().toLocaleString()}`
+    );
+    setShowCamera(false);
+    setRecordedUri(null);
+    setIsRecording(false);
+    Alert.alert('Saved!', 'Video attached to this attempt.');
+  }
 
   // Heights Add UI (same as meetform, requires pole)
   const HeightAddUI =
@@ -1420,40 +1516,58 @@ function PracticeFormScreen({ navigation }) {
                       <Text style={styles.muted}>No pole assigned.</Text>
                     )}
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-                      {h.attempts.map((attempt, attemptIdx) => (
-                        <Pressable
-                          key={attemptIdx}
-                          onPress={() => {
-                            setHeights(heightsArr => heightsArr.map((heightItem, i) =>
-                              i === heightIdx
-                                ? {
-                                    ...heightItem,
-                                    attempts: heightItem.attempts.map((a, j) =>
-                                      j === attemptIdx
-                                        ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
-                                        : a
-                                    )
-                                  }
-                                : heightItem
-                            ));
-                          }}
-                          style={{
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 8,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: attempt.result === 'clear' ? 'green' : 'red',
-                            backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
-                            minWidth: 56,
-                            marginRight: 8,
-                          }}>
-                          <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
-                            {attempt.result === 'clear' ? 'O' : 'X'}
-                          </Text>
-                          <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
-                        </Pressable>
-                      ))}
+                      {h.attempts.map((attempt, attemptIdx) => {
+                        const clips = getAttemptVideos(date, h.heightIn, attemptIdx + 1);
+                        return (
+                          <View key={attemptIdx} style={{ marginRight: 16, alignItems: 'center' }}>
+                            <Pressable
+                              onPress={() => {
+                                setHeights(heightsArr => heightsArr.map((heightItem, i) =>
+                                  i === heightIdx
+                                    ? {
+                                        ...heightItem,
+                                        attempts: heightItem.attempts.map((a, j) =>
+                                          j === attemptIdx
+                                            ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
+                                            : a
+                                        )
+                                      }
+                                    : heightItem
+                                ));
+                              }}
+                              style={{
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: 8,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: attempt.result === 'clear' ? 'green' : 'red',
+                                backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
+                                minWidth: 56,
+                                marginBottom: 2,
+                              }}>
+                              <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
+                                {attempt.result === 'clear' ? 'O' : 'X'}
+                              </Text>
+                              <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
+                            </Pressable>
+                            <ButtonSecondary
+                              title="Record Video"
+                              style={{ marginTop: 2, marginBottom: 2, paddingHorizontal: 8 }}
+                              onPress={() => handleRecordVideo(h, attemptIdx)}
+                            />
+                            {clips.length > 0 && (
+                              <ButtonSecondary
+                                title={`View Video (${clips.length})`}
+                                style={{ marginTop: 2, paddingHorizontal: 8 }}
+                                onPress={() =>
+                                  openVideoModal(clips, `Attempt Video (${date})`)
+                                }
+                              />
+                            )}
+                          </View>
+                        );
+                      })}
                     </View>
                   </View>
                 );
@@ -1462,6 +1576,99 @@ function PracticeFormScreen({ navigation }) {
               <Text style={styles.muted}>No heights added yet.</Text>
             )}
           </Section>
+          
+          {/* Video modal for viewing attempts */}
+          <Modal visible={videoModalOpen} transparent animationType="slide" onRequestClose={closeVideoModal}>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.sectionTitle}>{videoModalHeading}</Text>
+                {videoModalClips.map((clip, idx) => (
+                  <View key={idx} style={{ marginBottom: 16 }}>
+                    <Text style={styles.fieldLabel}>{clip.title}</Text>
+                    <VideoView
+                      style={{ height: 220, width: '100%', backgroundColor: '#000' }}
+                      source={{ uri: clip.uri }}
+                      nativeControls
+                      allowsPictureInPicture
+                      contentFit="contain"
+                    />
+                    <ButtonSecondary 
+                      title="Delete Video" 
+                      onPress={() => {
+                        Alert.alert('Delete video?', 'This cannot be undone.', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { 
+                            text: 'Delete', 
+                            style: 'destructive', 
+                            onPress: () => {
+                              deleteAttemptVideo(date, clip.heightIn, clip.attemptNumber, clip.id);
+                              closeVideoModal();
+                            }
+                          },
+                        ]);
+                      }}
+                      style={{ marginTop: 8 }}
+                    />
+                  </View>
+                ))}
+                <ButtonSecondary title="Close" onPress={closeVideoModal} style={{ marginTop: 8 }} />
+              </View>
+            </View>
+          </Modal>
+
+          {/* Camera modal for recording */}
+          <Modal visible={!!showCamera} animationType="slide" onRequestClose={() => setShowCamera(false)}>
+            <View style={{ flex: 1, backgroundColor: '#000' }}>
+              {recordedUri ? (
+                <View style={{ flex: 1 }}>
+                  <VideoView
+                    style={{ flex: 1 }}
+                    source={{ uri: recordedUri }}
+                    nativeControls
+                    allowsPictureInPicture
+                    contentFit="contain"
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginVertical: 24 }}>
+                    <ButtonPrimary title="Save" onPress={onSaveRecorded} />
+                    <ButtonSecondary title="Discard" onPress={() => setRecordedUri(null)} />
+                    <ButtonSecondary title="Close" onPress={() => setShowCamera(false)} />
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flex: 1 }}>
+                  <CameraView
+                    ref={cameraRef}
+                    style={{ flex: 1 }}
+                    facing="back"
+                    mode="video"
+                    enableAudio
+                  />
+                  <View style={{ position: 'absolute', bottom: 32, width: '100%', alignItems: 'center' }}>
+                    <Pressable
+                      onPress={onToggleRecord}
+                      style={{
+                        height: 64,
+                        minWidth: 140,
+                        borderRadius: 999,
+                        backgroundColor: isRecording ? '#ef4444' : '#10b981',
+                        borderWidth: 2,
+                        borderColor: isRecording ? '#ef4444' : '#10b981',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}>
+                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                        {isRecording ? 'Stop' : 'Record'}
+                      </Text>
+                    </Pressable>
+                    <View style={{ marginTop: 12 }}>
+                      <ButtonSecondary title="Close" onPress={() => setShowCamera(false)} />
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+          </Modal>
+
           <Field label="Notes">
             <TextInput value={notes} onChangeText={setNotes} placeholder="session notes…" style={[styles.input, { height: 90 }]} multiline />
           </Field>
@@ -1476,6 +1683,9 @@ function MeetFormScreen({ navigation }) {
   const { units } = usePVStore((s) => s.settings);
   const add = usePVStore((s) => s.addSession);
   const allSessions = usePVStore((s) => s.sessions);
+  const addAttemptVideo = usePVStore((s) => s.addAttemptVideo);
+  const getAttemptVideos = usePVStore((s) => s.getAttemptVideos);
+  const deleteAttemptVideo = usePVStore((s) => s.deleteAttemptVideo);
 
   const [date] = useState(new Date().toISOString());
   const [meetName, setMeetName] = useState('');
@@ -1570,6 +1780,97 @@ function MeetFormScreen({ navigation }) {
     }
     return arr;
   }, []);
+
+  // Video modal state
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [videoModalClips, setVideoModalClips] = useState([]);
+  const [videoModalHeading, setVideoModalHeading] = useState('');
+
+  // Camera permissions and recording state
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const [showCamera, setShowCamera] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedUri, setRecordedUri] = useState(null);
+  const cameraRef = useRef(null);
+
+  // Video modal functions
+  function openVideoModal(clips, heading) {
+    setVideoModalClips(clips);
+    setVideoModalHeading(heading);
+    setVideoModalOpen(true);
+  }
+  
+  function closeVideoModal() {
+    setVideoModalOpen(false);
+    setVideoModalClips([]);
+    setVideoModalHeading('');
+  }
+
+  // Handle recording video for an attempt
+  async function handleRecordVideo(heightObj, attemptIdx) {
+    if (!camPerm?.granted) {
+      const res = await requestCamPerm();
+      if (!res?.granted) {
+        Alert.alert('Permission required', 'Camera access is required to record video.');
+        return;
+      }
+    }
+    if (!micPerm?.granted) {
+      const resMic = await requestMicPerm();
+      if (!resMic?.granted) {
+        Alert.alert('Permission required', 'Microphone access is required to record video with audio.');
+        return;
+      }
+    }
+    setShowCamera({ heightObj, attemptIdx });
+    setRecordedUri(null);
+    setIsRecording(false);
+  }
+
+  // Toggle video recording
+  async function onToggleRecord() {
+    if (!cameraRef.current) return;
+    if (!isRecording) {
+      setIsRecording(true);
+      try {
+        const result = await cameraRef.current.recordAsync();
+        if (result?.uri) setRecordedUri(result.uri);
+      } catch (e) {
+        Alert.alert('Error', `Could not record video:\n${e?.message || e}`);
+      } finally {
+        setIsRecording(false);
+      }
+    } else {
+      try {
+        cameraRef.current.stopRecording();
+      } catch {}
+    }
+  }
+
+  // Save recorded video
+  function onSaveRecorded() {
+    if (!recordedUri || !showCamera) return;
+    
+    // Delete any existing video for this attempt (only one video per attempt)
+    const existingClips = getAttemptVideos(date, showCamera.heightObj.heightIn, showCamera.attemptIdx + 1);
+    existingClips.forEach(clip => {
+      deleteAttemptVideo(date, showCamera.heightObj.heightIn, showCamera.attemptIdx + 1, clip.id);
+    });
+    
+    // Add the new video
+    addAttemptVideo(
+      date,
+      showCamera.heightObj.heightIn,
+      showCamera.attemptIdx + 1,
+      recordedUri,
+      `Meet Video ${new Date().toLocaleString()}`
+    );
+    setShowCamera(false);
+    setRecordedUri(null);
+    setIsRecording(false);
+    Alert.alert('Saved!', 'Video attached to this attempt.');
+  }
 
   // Heights add UI (with pole selector)
   const HeightAddUI =
@@ -2083,40 +2384,58 @@ function MeetFormScreen({ navigation }) {
         )}
         {/* ATTEMPTS UI */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-          {h.attempts.map((attempt, attemptIdx) => (
-            <Pressable
-              key={attemptIdx}
-              onPress={() => {
-                setHeights(heightsArr => heightsArr.map((heightItem, i) =>
-                  i === heightIdx
-                    ? {
-                        ...heightItem,
-                        attempts: heightItem.attempts.map((a, j) =>
-                          j === attemptIdx
-                            ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
-                            : a
-                        )
-                      }
-                    : heightItem
-                ));
-              }}
-              style={{
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 8,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: attempt.result === 'clear' ? 'green' : 'red',
-                backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
-                minWidth: 56,
-                marginRight: 8,
-              }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
-                {attempt.result === 'clear' ? 'O' : 'X'}
-              </Text>
-              <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
-            </Pressable>
-          ))}
+          {h.attempts.map((attempt, attemptIdx) => {
+            const clips = getAttemptVideos(date, h.heightIn, attemptIdx + 1);
+            return (
+              <View key={attemptIdx} style={{ marginRight: 16, alignItems: 'center' }}>
+                <Pressable
+                  onPress={() => {
+                    setHeights(heightsArr => heightsArr.map((heightItem, i) =>
+                      i === heightIdx
+                        ? {
+                            ...heightItem,
+                            attempts: heightItem.attempts.map((a, j) =>
+                              j === attemptIdx
+                                ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
+                                : a
+                            )
+                          }
+                        : heightItem
+                    ));
+                  }}
+                  style={{
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 8,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: attempt.result === 'clear' ? 'green' : 'red',
+                    backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
+                    minWidth: 56,
+                    marginBottom: 2,
+                  }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
+                    {attempt.result === 'clear' ? 'O' : 'X'}
+                  </Text>
+                  <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
+                </Pressable>
+                <ButtonSecondary
+                  title="Record Video"
+                  style={{ marginTop: 2, marginBottom: 2, paddingHorizontal: 8 }}
+                  onPress={() => handleRecordVideo(h, attemptIdx)}
+                />
+                {clips.length > 0 && (
+                  <ButtonSecondary
+                    title={`View Video (${clips.length})`}
+                    style={{ marginTop: 2, paddingHorizontal: 8 }}
+                    onPress={() =>
+                      openVideoModal(clips, `Attempt Video (${date})`)
+                    }
+                  />
+                )}
+              </View>
+            );
+          })}
         </View>
       </View>
     );
@@ -2125,6 +2444,99 @@ function MeetFormScreen({ navigation }) {
   <Text style={styles.muted}>No heights added yet.</Text>
 )}
           </Section>
+          
+          {/* Video modal for viewing attempts */}
+          <Modal visible={videoModalOpen} transparent animationType="slide" onRequestClose={closeVideoModal}>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.sectionTitle}>{videoModalHeading}</Text>
+                {videoModalClips.map((clip, idx) => (
+                  <View key={idx} style={{ marginBottom: 16 }}>
+                    <Text style={styles.fieldLabel}>{clip.title}</Text>
+                    <VideoView
+                      style={{ height: 220, width: '100%', backgroundColor: '#000' }}
+                      source={{ uri: clip.uri }}
+                      nativeControls
+                      allowsPictureInPicture
+                      contentFit="contain"
+                    />
+                    <ButtonSecondary 
+                      title="Delete Video" 
+                      onPress={() => {
+                        Alert.alert('Delete video?', 'This cannot be undone.', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { 
+                            text: 'Delete', 
+                            style: 'destructive', 
+                            onPress: () => {
+                              deleteAttemptVideo(date, clip.heightIn, clip.attemptNumber, clip.id);
+                              closeVideoModal();
+                            }
+                          },
+                        ]);
+                      }}
+                      style={{ marginTop: 8 }}
+                    />
+                  </View>
+                ))}
+                <ButtonSecondary title="Close" onPress={closeVideoModal} style={{ marginTop: 8 }} />
+              </View>
+            </View>
+          </Modal>
+
+          {/* Camera modal for recording */}
+          <Modal visible={!!showCamera} animationType="slide" onRequestClose={() => setShowCamera(false)}>
+            <View style={{ flex: 1, backgroundColor: '#000' }}>
+              {recordedUri ? (
+                <View style={{ flex: 1 }}>
+                  <VideoView
+                    style={{ flex: 1 }}
+                    source={{ uri: recordedUri }}
+                    nativeControls
+                    allowsPictureInPicture
+                    contentFit="contain"
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginVertical: 24 }}>
+                    <ButtonPrimary title="Save" onPress={onSaveRecorded} />
+                    <ButtonSecondary title="Discard" onPress={() => setRecordedUri(null)} />
+                    <ButtonSecondary title="Close" onPress={() => setShowCamera(false)} />
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flex: 1 }}>
+                  <CameraView
+                    ref={cameraRef}
+                    style={{ flex: 1 }}
+                    facing="back"
+                    mode="video"
+                    enableAudio
+                  />
+                  <View style={{ position: 'absolute', bottom: 32, width: '100%', alignItems: 'center' }}>
+                    <Pressable
+                      onPress={onToggleRecord}
+                      style={{
+                        height: 64,
+                        minWidth: 140,
+                        borderRadius: 999,
+                        backgroundColor: isRecording ? '#ef4444' : '#10b981',
+                        borderWidth: 2,
+                        borderColor: isRecording ? '#ef4444' : '#10b981',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}>
+                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                        {isRecording ? 'Stop' : 'Record'}
+                      </Text>
+                    </Pressable>
+                    <View style={{ marginTop: 12 }}>
+                      <ButtonSecondary title="Close" onPress={() => setShowCamera(false)} />
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+          </Modal>
+
           <Field label="Notes">
             <TextInput value={notes} onChangeText={setNotes} placeholder="meet notes…" style={[styles.input, { height: 90 }]} multiline />
           </Field>
