@@ -17,14 +17,24 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.parmamanmi.polevaulttracker2",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "This app uses the camera for recording pole vault videos.",
+        "NSMicrophoneUsageDescription": "This app uses the microphone for recording audio during video capture.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to let you upload and view vault videos."
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/pole-vaulter.png",
         "backgroundColor": "#FFFFFF"
-      }
+      },
+      "package": "com.parmamanmi.polevaulttracker2",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "extra": {
       "eas": {
@@ -32,7 +42,8 @@
       }
     },
     "plugins": [
-      "expo-mail-composer"
+      "expo-mail-composer",
+      "expo-video"
     ]
   }
 }

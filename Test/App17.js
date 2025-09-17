@@ -44,6 +44,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import * as MailComposer from 'expo-mail-composer';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -601,25 +602,6 @@ function LogScreen({ navigation }) {
     }
   };
 
-  // Helper for O/X pill styling
-  function AttemptPill({ result }) {
-    return (
-      <View style={[
-        styles.pill,
-        result === 'clear'
-          ? { backgroundColor: '#e6ffe6', borderColor: 'green' }
-          : { backgroundColor: '#ffe6e6', borderColor: 'red' }
-      ]}>
-        <Text style={{
-          fontWeight: '600',
-          color: result === 'clear' ? 'green' : 'red'
-        }}>
-          {result === 'clear' ? 'O' : 'X'}
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <Screen>
       <Section title="Session Log">
@@ -628,114 +610,92 @@ function LogScreen({ navigation }) {
         ) : (
           <View>
             {sessions.map((s) => (
-              <Pressable key={s.id} onPress={() => navigation.navigate('SessionDetails', { id: s.id })} style={styles.card}>
-                <Row style={{ justifyContent: 'space-between' }}>
-                  <Text style={{ fontWeight: '700', fontSize: 16 }}>{s.type === 'meet' ? 'Meet' : 'Practice'} – {new Date(s.date).toLocaleDateString()}</Text>
-                  <Text style={styles.muted}>{s.meetName || s.dayName || ''}</Text>
-                </Row>
-                <View style={{ height: 6 }} />
-                <Text style={styles.pText} numberOfLines={2}>Goals: {s.goals || '—'}</Text>
-                <View style={{ height: 6 }} />
-                {/* --- BEGIN PATCHED ATTEMPTS RENDERING --- */}
-                {/* PRACTICE SESSION HEIGHTS */}
-                {s.type === 'practice' && Array.isArray(s.heights) && s.heights.length > 0 && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={styles.fieldLabel}>Attempted Heights:</Text>
-                    {s.heights.map((h, i) => {
-                      const pole = (Array.isArray(s.poles) && h.poleIdx !== undefined && s.poles[h.poleIdx]) ? s.poles[h.poleIdx] : null;
-                      // Find attempts: show up to and including first clear
-                      const clearIdx = h.attempts.findIndex(a => a.result === 'clear');
-                      const shownAttempts = h.attempts.slice(0, clearIdx === -1 ? undefined : clearIdx + 1);
-                      return (
-                        <View key={h.id || i} style={{ marginBottom: 10 }}>
-                          <Row style={{ alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                            <Pill text={fmtBar(h.heightIn, units)} />
-                            {shownAttempts.map((a, idx) => (
-                              <AttemptPill key={idx} result={a.result} />
-                            ))}
-                          </Row>
-                          {pole ? (
-                            <View style={{ marginLeft: 14 }}>
-                              <Row style={{ gap: 14 }}>
-                                <Text style={styles.pText}>
-                                  {pole.brand ? `Brand: ${pole.brand}` : ''}
-                                  {pole.length ? `   Length: ${pole.length}` : ''}
-                                </Text>
-                              </Row>
-                              <Row style={{ gap: 14 }}>
-                                <Text style={styles.pText}>
-                                  {pole.flex ? `Flex: ${pole.flex}` : ''}
-                                  {pole.weight ? `   Weight: ${pole.weight}` : ''}
-                                </Text>
-                              </Row>
-                              <Text style={styles.muted}>
-                                Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-                              </Text>
-                            </View>
-                          ) : (
-                            <Text style={[styles.muted, { marginLeft: 14 }]}>No pole assigned.</Text>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
+  <Pressable key={s.id} onPress={() => navigation.navigate('SessionDetails', { id: s.id })} style={styles.card}>
+    <Row style={{ justifyContent: 'space-between' }}>
+      <Text style={{ fontWeight: '700', fontSize: 16 }}>{s.type === 'meet' ? 'Meet' : 'Practice'} – {new Date(s.date).toLocaleDateString()}</Text>
+      <Text style={styles.muted}>{s.meetName || s.dayName || ''}</Text>
+    </Row>
+    <View style={{ height: 6 }} />
+    <Text style={styles.pText} numberOfLines={2}>Goals: {s.goals || '—'}</Text>
+    <View style={{ height: 6 }} />
+    {/* --- BEGIN PATCHED ATTEMPTS RENDERING --- */}
+    {s.type === 'practice' ? (
+      <>
+        <Row style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
+          <Pill text={`Steps ${s.steps ?? '—'}`} />
+          <Pill text={`Approach ${fmtFeetIn(s.approachIn)}`} />
+          <Pill text={`Takeoff ${fmtTakeoff(s.takeoffIn, 'imperial')}`} />
+          <Pill text={`Standards ${fmtStandards(s.standardsIn, units)}`} />
+          {s.heightIn ? <Pill text={`Bar ${fmtBar(s.heightIn, units)}`} /> : null}
+        </Row>
+        {/* PATCH: Show attempted heights for practice */}
+        {Array.isArray(s.heights) && s.heights.length > 0 && (
+          <View style={{ marginTop: 8 }}>
+            <Text style={styles.fieldLabel}>Attempted Heights:</Text>
+            {s.heights.map((h, i) => (
+              <Row key={h.id || i} style={{ alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                <Pill text={fmtBar(h.heightIn, units)} />
+                {Array.isArray(h.attempts) && h.attempts.length > 0 && (
+                  <Row style={{ gap: 4 }}>
+                    {h.attempts.slice(0, h.attempts.findIndex(a => a.result === 'clear') === -1 ? undefined : h.attempts.findIndex(a => a.result === 'clear') + 1).map((a, idx) => (
+                      <Pill
+                        key={idx}
+                        text={a.result === 'clear' ? 'O' : 'X'}
+                        style={a.result === 'clear'
+                          ? { backgroundColor: '#0a84ff', color: '#fff' }
+                          : { backgroundColor: '#ffd7db', color: '#c22' }
+                        }
+                      />
+                    ))}
+                  </Row>
                 )}
-                {/* MEET SESSION ATTEMPTS */}
-                {s.type === 'meet' && Array.isArray(s.attempts) && s.attempts.length > 0 && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={styles.fieldLabel}>Attempted Heights:</Text>
-                    {s.attempts.map((h, i) => {
-                      const pole = (Array.isArray(s.poles) && h.poleIdx !== undefined && s.poles[h.poleIdx]) ? s.poles[h.poleIdx] : null;
-                      const clearIdx = h.attempts.findIndex(a => a.result === 'clear');
-                      const shownAttempts = h.attempts.slice(0, clearIdx === -1 ? undefined : clearIdx + 1);
-                      return (
-                        <View key={i} style={{ marginBottom: 10 }}>
-                          <Row style={{ alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                            <Pill text={fmtBar(h.heightIn, units)} />
-                            {shownAttempts.map((a, idx) => (
-                              <AttemptPill key={idx} result={a.result} />
-                            ))}
-                          </Row>
-                          {pole ? (
-                            <View style={{ marginLeft: 14 }}>
-                              <Row style={{ gap: 14 }}>
-                                <Text style={styles.pText}>
-                                  {pole.brand ? `Brand: ${pole.brand}` : ''}
-                                  {pole.length ? `   Length: ${pole.length}` : ''}
-                                </Text>
-                              </Row>
-                              <Row style={{ gap: 14 }}>
-                                <Text style={styles.pText}>
-                                  {pole.flex ? `Flex: ${pole.flex}` : ''}
-                                  {pole.weight ? `   Weight: ${pole.weight}` : ''}
-                                </Text>
-                              </Row>
-                              <Text style={styles.muted}>
-                                Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-                              </Text>
-                            </View>
-                          ) : (
-                            <Text style={[styles.muted, { marginLeft: 14 }]}>No pole assigned.</Text>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
-                {/* --- END PATCHED ATTEMPTS RENDERING --- */}
-                <View style={{ height: 10 }} />
-                <Row style={{ justifyContent: 'space-between' }}>
-                  <ButtonSecondary title="Share" onPress={() => handleShare(s)} />
-                  <ButtonSecondary
-                    title="Delete"
-                    onPress={() => Alert.alert('Delete session?', 'This cannot be undone.', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Delete', style: 'destructive', onPress: () => del(s.id) },
-                    ])}
-                  />
-                </Row>
-              </Pressable>
+              </Row>
             ))}
+          </View>
+        )}
+      </>
+    ) : (
+      <View style={{ marginTop: 6 }}>
+        {(s.attempts || []).map((heightBlock, i) => {
+          // Find index of first clear attempt ("O")
+          const clearIdx = (heightBlock.attempts || []).findIndex(a => a.result === 'clear');
+          // Only show misses up to and including the clear attempt if present
+          const shownAttempts = (heightBlock.attempts || []).slice(0, clearIdx === -1 ? undefined : clearIdx + 1);
+          return (
+            <Row key={i} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+              <Pill text={fmtBar(heightBlock.heightIn, units)} />
+              {shownAttempts.map((a, idx) =>
+                <Pill
+                  key={idx}
+                  text={a.result === 'clear' ? 'O' : 'X'}
+                  style={a.result === 'clear'
+                    ? { backgroundColor: '#0a84ff', color: '#fff' }
+                    : { backgroundColor: '#ffd7db', color: '#c22' }
+                  }
+                />
+              )}
+            </Row>
+          );
+        })}
+        <Row style={{ flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+          <Pill text={`PR ${fmtBar(calcPR([s]), units) || '—'}`} />
+        </Row>
+      </View>
+    )}
+    {/* --- END PATCHED ATTEMPTS RENDERING --- */}
+    <View style={{ height: 10 }} />
+    <Row style={{ justifyContent: 'space-between' }}>
+      <ButtonSecondary title="Share" onPress={() => handleShare(s)} />
+      <ButtonSecondary
+        title="Delete"
+        onPress={() => Alert.alert('Delete session?', 'This cannot be undone.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => del(s.id) },
+        ])}
+      />
+    </Row>
+  </Pressable>
+))}
           </View>
         )}
       </Section>
@@ -766,25 +726,6 @@ function SessionDetailsScreen({ route, navigation }) {
     }
   };
 
-  // Helper for O/X pill styling
-  function AttemptPill({ result }) {
-    return (
-      <View style={[
-        styles.pill,
-        result === 'clear'
-          ? { backgroundColor: '#e6ffe6', borderColor: 'green' }
-          : { backgroundColor: '#ffe6e6', borderColor: 'red' }
-      ]}>
-        <Text style={{
-          fontWeight: '600',
-          color: result === 'clear' ? 'green' : 'red'
-        }}>
-          {result === 'clear' ? 'O' : 'X'}
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <Screen>
       <Section
@@ -794,43 +735,31 @@ function SessionDetailsScreen({ route, navigation }) {
           <>
             {session.meetName ? <Field label="Meet"><Text style={styles.pText}>{session.meetName}</Text></Field> : null}
             <Field label="Goals"><Text style={styles.pText}>{session.goals || '—'}</Text></Field>
-            <Field label="Attempted Heights">
+            <Field label="Attempts">
               {session.attempts?.length ? (
                 <View style={{ gap: 10 }}>
-                  {session.attempts.map((h, i) => {
-                    const pole = (Array.isArray(session.poles) && h.poleIdx !== undefined && session.poles[h.poleIdx]) ? session.poles[h.poleIdx] : null;
-                    const clearIdx = (h.attempts || []).findIndex(a => a.result === 'clear');
-                    const shownAttempts = (h.attempts || []).slice(0, clearIdx === -1 ? undefined : clearIdx + 1);
-
+                  {session.attempts.map((attemptBlock, i) => {
+                    const clearIdx = (attemptBlock.attempts || []).findIndex(a => a.result === 'clear');
+                    const shownAttempts = (attemptBlock.attempts || []).slice(0, clearIdx === -1 ? undefined : clearIdx + 1);
                     return (
                       <View key={i} style={{ marginBottom: 10 }}>
-                        <Row style={{ alignItems: 'center', gap: 8 }}>
-                          <Pill text={fmtBar(h.heightIn, units)} />
-                          {shownAttempts.map((a, idx) =>
-                            <AttemptPill key={idx} result={a.result} />
-                          )}
+                        <Text style={styles.fieldLabel}>Bar: {fmtBar(attemptBlock.heightIn, units)}</Text>
+                        <Row style={{ gap: 14 }}>
+                          {shownAttempts.map((a, idx) => (
+                            <React.Fragment key={idx}>
+                              <Text style={{
+                                fontWeight: '700',
+                                color: a.result === 'clear' ? '#0a7' : '#c22',
+                                fontSize: 18,
+                              }}>
+                                {a.result === 'clear' ? 'O' : 'X'}
+                              </Text>
+                              <Text style={{ color: '#555', fontSize: 13 }}>
+                                {a.type === 'bungee' ? 'Bungee' : 'Bar'}
+                              </Text>
+                            </React.Fragment>
+                          ))}
                         </Row>
-                        {pole ? (
-                          <View style={{ marginLeft: 14 }}>
-                            <Row style={{ gap: 14 }}>
-                              <Text style={styles.pText}>
-                                {pole.brand ? `Brand: ${pole.brand}` : ''}
-                                {pole.length ? `   Length: ${pole.length}` : ''}
-                              </Text>
-                            </Row>
-                            <Row style={{ gap: 14 }}>
-                              <Text style={styles.pText}>
-                                {pole.flex ? `Flex: ${pole.flex}` : ''}
-                                {pole.weight ? `   Weight: ${pole.weight}` : ''}
-                              </Text>
-                            </Row>
-                            <Text style={styles.muted}>
-                              Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-                            </Text>
-                          </View>
-                        ) : (
-                          <Text style={[styles.muted, { marginLeft: 14 }]}>No pole assigned.</Text>
-                        )}
                       </View>
                     );
                   })}
@@ -843,7 +772,7 @@ function SessionDetailsScreen({ route, navigation }) {
               <Row style={{ flexWrap: 'wrap', gap: 10 }}>
                 <Pill text={`Steps ${session.steps ?? '—'}`} />
                 <Pill text={`Approach ${fmtFeetIn(session.approachIn)}`} />
-                <Pill text={`Takeoff ${fmtTakeoff(session.takeoffIn, units)}`} />
+                <Pill text={`Takeoff ${fmtTakeoff(session.takeoffIn, 'imperial')}`} />
                 <Pill text={`Standards ${fmtStandards(session.standardsIn, units)}`} />
               </Row>
             </Field>
@@ -860,47 +789,28 @@ function SessionDetailsScreen({ route, navigation }) {
               <Pill text={`Standards ${fmtStandards(session.standardsIn, units)}`} />
               {session.heightIn ? <Pill text={`Bar ${fmtBar(session.heightIn, units)}`} /> : null}
             </Row>
-            {/* Practice: attempted heights with pole info */}
             {Array.isArray(session.heights) && session.heights.length > 0 && (
               <Field label="Attempted Heights">
-                <View style={{ gap: 10 }}>
-                  {session.heights.map((h, i) => {
-                    const pole = (Array.isArray(session.poles) && h.poleIdx !== undefined && session.poles[h.poleIdx]) ? session.poles[h.poleIdx] : null;
-                    const clearIdx = (h.attempts || []).findIndex(a => a.result === 'clear');
-                    const shownAttempts = (h.attempts || []).slice(0, clearIdx === -1 ? undefined : clearIdx + 1);
-
-                    return (
-                      <View key={h.id || i} style={{ marginBottom: 10 }}>
-                        <Row style={{ alignItems: 'center', gap: 8 }}>
-                          <Pill text={fmtBar(h.heightIn, units)} />
-                          {shownAttempts.map((a, idx) =>
-                            <AttemptPill key={idx} result={a.result} />
-                          )}
+                <View style={{ gap: 6 }}>
+                  {session.heights.map((h, i) => (
+                    <Row key={h.id || i} style={{ alignItems: 'center', gap: 8 }}>
+                      <Pill text={fmtBar(h.heightIn, units)} />
+                      {Array.isArray(h.attempts) && h.attempts.length > 0 && (
+                        <Row style={{ gap: 4 }}>
+                          {h.attempts.slice(0, h.attempts.findIndex(a => a.result === 'clear') === -1 ? undefined : h.attempts.findIndex(a => a.result === 'clear') + 1).map((a, idx) => (
+                            <Pill
+                              key={idx}
+                              text={a.result === 'clear' ? 'O' : 'X'}
+                              style={a.result === 'clear'
+                                ? { backgroundColor: '#0a84ff', color: '#fff' }
+                                : { backgroundColor: '#ffd7db', color: '#c22' }
+                              }
+                            />
+                          ))}
                         </Row>
-                        {pole ? (
-                          <View style={{ marginLeft: 14 }}>
-                            <Row style={{ gap: 14 }}>
-                              <Text style={styles.pText}>
-                                {pole.brand ? `Brand: ${pole.brand}` : ''}
-                                {pole.length ? `   Length: ${pole.length}` : ''}
-                              </Text>
-                            </Row>
-                            <Row style={{ gap: 14 }}>
-                              <Text style={styles.pText}>
-                                {pole.flex ? `Flex: ${pole.flex}` : ''}
-                                {pole.weight ? `   Weight: ${pole.weight}` : ''}
-                              </Text>
-                            </Row>
-                            <Text style={styles.muted}>
-                              Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-                            </Text>
-                          </View>
-                        ) : (
-                          <Text style={[styles.muted, { marginLeft: 14 }]}>No pole assigned.</Text>
-                        )}
-                      </View>
-                    );
-                  })}
+                      )}
+                    </Row>
+                  ))}
                 </View>
               </Field>
             )}
@@ -942,63 +852,25 @@ function SessionDetailsScreen({ route, navigation }) {
 }
 
 function PracticeFormScreen({ navigation }) {
-  const { units } = usePVStore((s) => s.settings);
+  const { units, athlete } = usePVStore((s) => s.settings);
   const add = usePVStore((s) => s.addSession);
   const plan = usePVStore((s) => s.weeklyPlan);
-  const allSessions = usePVStore((s) => s.sessions);
 
   const dayNameStr = todayName();
   const dayPlan = plan[dayNameStr] || { goals: '', routine: [] };
 
   const [date] = useState(new Date().toISOString());
   const [goals, setGoals] = useState(dayPlan.goals || '');
+  const allSessions = usePVStore((s) => s.sessions);
+  const [attemptTypeDropdownOpen, setAttemptTypeDropdownOpen] = useState({});
 
-  // Routine logic
-  const initialRoutine = useMemo(
-    () => (dayPlan.routine || []).map((r) => ({ text: r, done: false, isHeader: isRoutineHeader(r) })),
-    [dayPlan.routine]
-  );
-  const [routine, setRoutine] = useState(initialRoutine);
-
-  // Heights & attempts logic
-  const [heights, setHeights] = useState([]);
-  const [addHeightFt, setAddHeightFt] = useState('');
-  const [addHeightIn, setAddHeightIn] = useState('');
-  const [addHeightM, setAddHeightM] = useState('');
-  const [ftModalOpen, setFtModalOpen] = useState(false);
-  const [inModalOpen, setInModalOpen] = useState(false);
-  const [mModalOpen, setMModalOpen] = useState(false);
-  const [addHeightPoleIdx, setAddHeightPoleIdx] = useState(null);
-  const [poleSelectModalOpen, setPoleSelectModalOpen] = useState(false);
-
-  // Poles section
-  const [poles, setPoles] = useState([]);
-  const [poleModalOpen, setPoleModalOpen] = useState(false);
-  const [poleBrand, setPoleBrand] = useState('');
-  const [poleLength, setPoleLength] = useState('');
-  const [poleFlex, setPoleFlex] = useState('');
-  const [poleWeight, setPoleWeight] = useState('');
-  const [poleSteps, setPoleSteps] = useState('');
-  const [poleApproachFeet, setPoleApproachFeet] = useState('');
-  const [poleApproachInches, setPoleApproachInches] = useState('');
-  const [poleTakeoffIn, setPoleTakeoffIn] = useState('');
-  const [poleStandardsIn, setPoleStandardsIn] = useState('');
-  const [poleHands, setPoleHands] = useState('');
-  const [poleStepsOpen, setPoleStepsOpen] = useState(false);
-  const [poleApproachFeetOpen, setPoleApproachFeetOpen] = useState(false);
-  const [poleApproachInchesOpen, setPoleApproachInchesOpen] = useState(false);
-  const [poleTakeoffModalOpen, setPoleTakeoffModalOpen] = useState(false);
-  const [poleStandardsModalOpen, setPoleStandardsModalOpen] = useState(false);
-  const [poleHandsOpen, setPoleHandsOpen] = useState(false);
-  const [editPoleIdx, setEditPoleIdx] = useState(null);
-
-  // Previous poles from all sessions (deduplicated)
+  // Gather all poles from all sessions
   const previousPoles = useMemo(() => {
     const polesArr = [];
     (allSessions || []).forEach(sess => {
       if (Array.isArray(sess.poles)) {
         sess.poles.forEach(p => {
-          const key = `${p.brand || ''}|${p.length || ''}|${p.flex || ''}|${p.weight || ''}`;
+          const key = `${p.length || ''}|${p.flex || ''}|${p.weight || ''}`;
           polesArr.push({ ...p, _key: key });
         });
       }
@@ -1013,15 +885,66 @@ function PracticeFormScreen({ navigation }) {
     }
     return deduped;
   }, [allSessions]);
-  const [recentPoleSelectOpen, setRecentPoleSelectOpen] = useState(false);
 
-  // Dropdowns
+  // Steps dropdown
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const [steps, setSteps] = useState('');
+
+  // Approach dropdowns
+  const [approachFeet, setApproachFeet] = useState(0);
+  const [approachInches, setApproachInches] = useState(0);
+  const [approachFeetOpen, setApproachFeetOpen] = useState(false);
+  const [approachInchesOpen, setApproachInchesOpen] = useState(false);
+
+  // Takeoff mark dropdown state
+  const [takeoffModalOpen, setTakeoffModalOpen] = useState(false);
+  const [takeoffIn, setTakeoffIn] = useState(0);
+
+  // Standards dropdown state
+  const [standardsModalOpen, setStandardsModalOpen] = useState(false);
+  const [standardsIn, setStandardsIn] = useState(0);
+
+  // Heights & attempts (like meet form)
+  const [heights, setHeights] = useState([]);
+  const [addHeightFt, setAddHeightFt] = useState('');
+  const [addHeightIn, setAddHeightIn] = useState('');
+  const [addHeightM, setAddHeightM] = useState('');
+  const [ftModalOpen, setFtModalOpen] = useState(false);
+  const [inModalOpen, setInModalOpen] = useState(false);
+  const [mModalOpen, setMModalOpen] = useState(false);
+
+  // Notes/email
+  const [notes, setNotes] = useState('');
+  const [email, setEmail] = useState('');
+  const settings = usePVStore((s) => s.settings);
+
+  // Routine logic
+  const initialRoutine = useMemo(
+    () => (dayPlan.routine || []).map((r) => ({ text: r, done: false, isHeader: isRoutineHeader(r) })),
+    [dayPlan.routine]
+  );
+  const [routine, setRoutine] = useState(initialRoutine);
+
+  // Dropdown options
+  const APPROACH_MAX_FEET = 150;
   const stepOptions = useMemo(() => Array.from({ length: 15 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) })), []);
-  const approachFeetOptions = useMemo(() => Array.from({ length: 150 }, (_, i) => ({ label: `${i + 1} ft`, value: i + 1 })), []);
+  const approachFeetOptions = useMemo(() => Array.from({ length: APPROACH_MAX_FEET }, (_, i) => ({ label: `${i + 1} ft`, value: i + 1 })), []);
   const approachInchesOptions = useMemo(() => Array.from({ length: 11 }, (_, i) => ({ label: `${i + 1} in`, value: i + 1 })), []);
+  const mOptions = useMemo(() => {
+    const arr = [];
+    for (let i = 152; i <= 609.6; i += 1) {
+      const m = i / 100;
+      arr.push({ label: `${m.toFixed(2).replace(/\.?0+$/,'')} m`, value: metersToInches(m), valueRaw: m });
+    }
+    return arr;
+  }, []);
   const takeoffFtOptions = useMemo(() => Array.from({ length: ((15 - 2) / 0.25) + 1 }, (_, i) => {
     const ft = 2 + i * 0.25;
     return { label: `${ft.toFixed(2)} ft`, value: Math.round(ft * 12) };
+  }), []);
+  const takeoffCmOptions = useMemo(() => Array.from({ length: (85 - 40) + 1 }, (_, i) => {
+    const cm = 40 + i;
+    return { label: `${cm} cm`, value: (cm / 2.54) };
   }), []);
   const standardsInOptions = useMemo(() => Array.from({ length: ((31.5 - 18) / 0.5) + 1 }, (_, i) => {
     const val = 18 + i * 0.5;
@@ -1033,25 +956,142 @@ function PracticeFormScreen({ navigation }) {
   }), []);
   const ftOptions = useMemo(() => Array.from({ length: 25 }, (_, i) => ({ label: `${i + 1} ft`, value: i + 1 })), []);
   const inOptions = useMemo(() => Array.from({ length: 12 }, (_, i) => ({ label: `${i} in`, value: i })), []);
-  const mOptions = useMemo(() => {
-    const arr = [];
-    for (let i = 152; i <= 609.6; i += 1) {
-      const m = i / 100;
-      arr.push({ label: `${m.toFixed(2)}`, value: m });
-    }
-    return arr;
-  }, []);
-  const handsOptions = useMemo(() => {
-    const arr = [];
-    for (let val = 1; val <= 10; val += 0.25) {
-      arr.push({ label: val.toFixed(2), value: val });
-    }
-    return arr;
-  }, []);
 
-  const [notes, setNotes] = useState('');
+  // Poles logic
+  const [poles, setPoles] = useState([]);
+  const [poleModalOpen, setPoleModalOpen] = useState(false);
+  const [poleLength, setPoleLength] = useState('');
+  const [poleFlex, setPoleFlex] = useState('');
+  const [poleWeight, setPoleWeight] = useState('');
+  const [editPoleIdx, setEditPoleIdx] = useState(null);
+  const [addHeightPoleIdx, setAddHeightPoleIdx] = useState(null);
+  const [poleSelectModalOpen, setPoleSelectModalOpen] = useState(false);
 
-  // Heights Add UI (same as meetform, requires pole)
+  // Heights & attempts logic (with poleIdx)
+  const handleAddHeightImperial = () => {
+    const ft = Number(addHeightFt);
+    const inch = Number(addHeightIn);
+    if ((!ft && !inch) || isNaN(ft) || isNaN(inch)) return Alert.alert('Select a valid height');
+    if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
+    const totalIn = ft * 12 + inch;
+    setHeights((arr) => [
+      ...arr,
+      {
+        id: shortId(),
+        heightIn: totalIn,
+        attempts: [
+          { result: 'miss', idx: 1, type: 'bar' },
+          { result: 'miss', idx: 2, type: 'bar' },
+          { result: 'miss', idx: 3, type: 'bar' }
+        ],
+        poleIdx: addHeightPoleIdx
+      }
+    ]);
+    setAddHeightFt('');
+    setAddHeightIn('');
+    setAddHeightPoleIdx(null);
+  };
+  const handleAddHeightMetric = () => {
+    const m = Number(addHeightM);
+    if (!m || isNaN(m)) return Alert.alert('Select a valid height');
+    if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
+    setHeights((arr) => [
+      ...arr,
+      {
+        id: shortId(),
+        heightIn: m * 39.3701, // meters to inches
+        attempts: [
+          { result: 'miss', idx: 1, type: 'bar' },
+          { result: 'miss', idx: 2, type: 'bar' },
+          { result: 'miss', idx: 3, type: 'bar' }
+        ],
+        poleIdx: addHeightPoleIdx
+      }
+    ]);
+    setAddHeightM('');
+    setAddHeightPoleIdx(null);
+  };
+
+
+  const updateAttemptResult = (heightId, attemptIdx, result) => {
+    setHeights((arr) =>
+      arr.map((height) => {
+        if (height.id !== heightId) return height;
+        if (result === 'clear') {
+          return {
+            ...height,
+            attempts: height.attempts.map((a) =>
+              a.idx === attemptIdx ? { ...a, result: 'clear' } : a
+            ),
+            completed: true
+          };
+        } else {
+          if (height.attempts.some(a => a.result === 'clear')) return height;
+          return {
+            ...height,
+            attempts: height.attempts.map((a) =>
+              a.idx === attemptIdx ? { ...a, result: 'miss' } : a
+            )
+          };
+        }
+      })
+    );
+  };
+
+  const removeHeight = (heightId) => setHeights((arr) => arr.filter((h) => h.id !== heightId));
+  const toggleCheck = (idx) =>
+    setRoutine((list) =>
+      list.map((item, i) => (i === idx && !item.isHeader ? { ...item, done: !item.done } : item))
+    );
+  const resetChecks = () =>
+    setRoutine((list) => list.map((item) => item.isHeader ? item : { ...item, done: false }));
+
+  const calcPR = (sessions) => {
+    let best = 0;
+    for (const s of sessions || []) {
+      if (s.type === 'meet' && Array.isArray(s.attempts)) {
+        for (const a of s.attempts) { if (a.result === 'clear') best = Math.max(best, Number(a.heightIn) || 0); }
+      }
+    }
+    return best || 0;
+  };
+
+  const save = () => {
+    const approachIn = toInches({ feet: Number(approachFeet || 0), inches: Number(approachInches || 0) });
+    const sess = {
+      id: shortId(),
+      type: 'practice',
+      date,
+      dayName: dayNameStr,
+      goals,
+      steps: steps ? Number(steps) : undefined,
+      approachIn,
+      takeoffIn: Number(takeoffIn) || 0,
+      standardsIn: Number(standardsIn) || 0,
+      poles,
+      heights,
+      notes,
+      routine: routine.map(({ text, done, isHeader }) => ({ text, done: !!done, isHeader: !!isHeader })),
+    };
+    const allSessions = usePVStore.getState().sessions;
+    const formerPR = calcPR(allSessions);
+    const highestPractice = Math.max(...(sess.heights || []).map(h =>
+      h.attempts.some(a => a.result === 'clear') ? h.heightIn : 0
+    ), 0);
+
+    let alertMsg = `Highest cleared this practice: ${fmtBar(highestPractice, units)}\nFormer PR: ${fmtBar(formerPR, units)}\n`;
+    if (highestPractice > formerPR) {
+      alertMsg += `🎉 New PR (practice): ${fmtBar(highestPractice, units)}!`;
+    } else {
+      alertMsg += `PR unchanged.`;
+    }
+
+    add(sess);
+    Alert.alert('Practice Saved!', alertMsg);
+    navigation.goBack();
+  };
+
+  // Heights UI (with pole selector)
   const HeightAddUI =
     units === 'imperial' ? (
       <View>
@@ -1084,7 +1124,7 @@ function PracticeFormScreen({ navigation }) {
             label="Pole Used"
             valueLabel={
               addHeightPoleIdx !== null && poles[addHeightPoleIdx]
-                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].brand || ''} ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
+                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
                 : 'Select Pole'
             }
             onPress={() => setPoleSelectModalOpen(true)}
@@ -1093,7 +1133,7 @@ function PracticeFormScreen({ navigation }) {
             visible={poleSelectModalOpen}
             title="Select Pole"
             options={poles.map((pole, idx) => ({
-              label: `Pole ${idx + 1}: ${pole.brand || ''} ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
+              label: `Pole ${idx + 1}: ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
               value: idx
             }))}
             onSelect={(opt) => {
@@ -1105,29 +1145,7 @@ function PracticeFormScreen({ navigation }) {
         </Row>
         <ButtonPrimary
           title="Add Height"
-          onPress={() => {
-            const ft = Number(addHeightFt);
-            const inch = Number(addHeightIn);
-            if ((!ft && !inch) || isNaN(ft) || isNaN(inch)) return Alert.alert('Select a valid height');
-            if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
-            const totalIn = ft * 12 + inch;
-            setHeights((arr) => [
-              ...arr,
-              {
-                id: shortId(),
-                heightIn: totalIn,
-                attempts: [
-                  { result: 'miss', idx: 1, type: 'bar' },
-                  { result: 'miss', idx: 2, type: 'bar' },
-                  { result: 'miss', idx: 3, type: 'bar' }
-                ],
-                poleIdx: addHeightPoleIdx
-              }
-            ]);
-            setAddHeightFt('');
-            setAddHeightIn('');
-            setAddHeightPoleIdx(null);
-          }}
+          onPress={handleAddHeightImperial}
           style={{
             marginTop: 8,
             alignSelf: 'flex-start',
@@ -1149,15 +1167,15 @@ function PracticeFormScreen({ navigation }) {
           <DropdownModal
             visible={mModalOpen}
             title="Meters"
-            options={mOptions.map(opt => ({ ...opt, label: `${opt.value} m` }))}
-            onSelect={(opt) => { setAddHeightM(opt.value); setMModalOpen(false); }}
+            options={mOptions.map(opt => ({ ...opt, label: `${opt.valueRaw} m` }))}
+            onSelect={(opt) => { setAddHeightM(opt.valueRaw); setMModalOpen(false); }}
             onClose={() => setMModalOpen(false)}
           />
           <SimpleDropdown
             label="Pole Used"
             valueLabel={
               addHeightPoleIdx !== null && poles[addHeightPoleIdx]
-                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].brand || ''} ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
+                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
                 : 'Select Pole'
             }
             onPress={() => setPoleSelectModalOpen(true)}
@@ -1166,7 +1184,7 @@ function PracticeFormScreen({ navigation }) {
             visible={poleSelectModalOpen}
             title="Select Pole"
             options={poles.map((pole, idx) => ({
-              label: `Pole ${idx + 1}: ${pole.brand || ''} ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
+              label: `Pole ${idx + 1}: ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
               value: idx
             }))}
             onSelect={(opt) => {
@@ -1178,26 +1196,7 @@ function PracticeFormScreen({ navigation }) {
         </Row>
         <ButtonPrimary
           title="Add Height"
-          onPress={() => {
-            const m = Number(addHeightM);
-            if (!m || isNaN(m)) return Alert.alert('Select a valid height');
-            if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
-            setHeights((arr) => [
-              ...arr,
-              {
-                id: shortId(),
-                heightIn: m * 39.3701,
-                attempts: [
-                  { result: 'miss', idx: 1, type: 'bar' },
-                  { result: 'miss', idx: 2, type: 'bar' },
-                  { result: 'miss', idx: 3, type: 'bar' }
-                ],
-                poleIdx: addHeightPoleIdx
-              }
-            ]);
-            setAddHeightM('');
-            setAddHeightPoleIdx(null);
-          }}
+          onPress={handleAddHeightMetric}
           style={{
             marginTop: 8,
             alignSelf: 'flex-start',
@@ -1211,435 +1210,467 @@ function PracticeFormScreen({ navigation }) {
       </View>
     );
 
-  // FULL POLE MODAL
-  const PoleModal = (
-    <Modal visible={poleModalOpen} transparent animationType="slide">
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalCard}>
-          <Text style={styles.sectionTitle}>{editPoleIdx !== null ? "Edit Pole" : "Add Pole"}</Text>
-          {previousPoles.length > 0 && (
-            <Field label="Copy previous pole">
-              <SimpleDropdown
-                label="Select previous pole"
-                valueLabel=""
-                onPress={() => setRecentPoleSelectOpen(true)}
-              />
-              <DropdownModal
-                visible={recentPoleSelectOpen}
-                title="Select Previous Pole"
-                options={previousPoles.map((pole, idx) => ({
-                  label: `Pole ${idx + 1}: ${pole.brand || ''} ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
-                  value: idx
-                }))}
-                onSelect={(opt) => {
-                  const p = previousPoles[opt.value];
-                  setPoleBrand(p.brand || '');
-                  setPoleLength(p.length || '');
-                  setPoleFlex(p.flex || '');
-                  setPoleWeight(p.weight || '');
-                  setPoleSteps(p.steps || '');
-                  setPoleApproachFeet(p.approachFeet || '');
-                  setPoleApproachInches(p.approachInches || '');
-                  setPoleTakeoffIn(p.takeoffIn || '');
-                  setPoleStandardsIn(p.standardsIn || '');
-                  setPoleHands(p.hands || '');
-                  setRecentPoleSelectOpen(false);
-                }}
-                onClose={() => setRecentPoleSelectOpen(false)}
-              />
-            </Field>
+  const TakeoffDropdown = (
+    <>
+      <SimpleDropdown
+        label="Select takeoff mark"
+        valueLabel={takeoffIn ? `${(takeoffIn / 12).toFixed(2)} ft` : 'Select takeoff mark'}
+        onPress={() => setTakeoffModalOpen(true)}
+      />
+      <DropdownModal
+        visible={takeoffModalOpen}
+        title="Takeoff Mark (ft)"
+        options={takeoffFtOptions}
+        onSelect={(opt) => { setTakeoffIn(opt.value); setTakeoffModalOpen(false); }}
+        onClose={() => setTakeoffModalOpen(false)}
+      />
+    </>
+  );
+
+  const StandardsDropdown = units === 'imperial'
+    ? (
+      <>
+        <SimpleDropdown
+          label="Select standards"
+          valueLabel={standardsIn ? `${standardsIn}"` : 'Select standards'}
+          onPress={() => setStandardsModalOpen(true)}
+        />
+        <DropdownModal
+          visible={standardsModalOpen}
+          title="Standards (in)"
+          options={standardsInOptions}
+          onSelect={(opt) => { setStandardsIn(opt.value); setStandardsModalOpen(false); }}
+          onClose={() => setStandardsModalOpen(false)}
+        />
+      </>
+    )
+    : (
+      <>
+        <SimpleDropdown
+          label="Select standards (cm)"
+          valueLabel={standardsIn ? `${Math.round(standardsIn * 2.54)} cm` : 'Select standards (cm)'}
+          onPress={() => setStandardsModalOpen(true)}
+        />
+        <DropdownModal
+          visible={standardsModalOpen}
+          title="Standards (cm)"
+          options={standardsCmOptions}
+          onSelect={(opt) => { setStandardsIn(opt.value); setStandardsModalOpen(false); }}
+          onClose={() => setStandardsModalOpen(false)}
+        />
+      </>
+    );
+
+  const handleEmail = async () => {
+    if (!email || !email.includes('@')) {
+      Alert.alert("Invalid email", "Please enter a valid email address.");
+      return;
+    }
+    try {
+      const text = sessionSummaryText({
+        type: 'practice',
+        date,
+        dayName: dayNameStr,
+        goals,
+        steps: steps ? Number(steps) : undefined,
+        approachIn: toInches({ feet: Number(approachFeet || 0), inches: Number(approachInches || 0) }),
+        takeoffIn: Number(takeoffIn) || 0,
+        standardsIn: Number(standardsIn) || 0,
+        poles,
+        heights,
+        notes,
+        routine: routine.map(({ text, done, isHeader }) => ({ text, done: !!done, isHeader: !!isHeader })),
+      }, settings, athlete);
+      await MailComposer.composeAsync({
+        recipients: [email],
+        subject: 'PoleVault Tracker Practice Session',
+        body: text,
+      });
+    } catch (err) {
+      Alert.alert('Error', 'Could not open email composer.');
+    }
+  };
+
+  const SetupBlock = (
+    <Section title="Setup used">
+      <Field label="Steps">
+        <SimpleDropdown
+          label="Select steps"
+          valueLabel={steps ? `${steps}` : 'Select steps'}
+          onPress={() => setStepsOpen(true)}
+        />
+        <DropdownModal
+          visible={stepsOpen}
+          title="Steps"
+          options={stepOptions}
+          onSelect={(opt) => setSteps(opt.value)}
+          onClose={() => setStepsOpen(false)}
+        />
+      </Field>
+      <Field label="Approach">
+        <Row style={{ gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <SimpleDropdown
+              label="Feet"
+              valueLabel={approachFeet ? `${approachFeet} ft` : 'Feet'}
+              onPress={() => setApproachFeetOpen(true)}
+            />
+            <DropdownModal
+              visible={approachFeetOpen}
+              title="Feet"
+              options={approachFeetOptions}
+              onSelect={(opt) => setApproachFeet(opt.value)}
+              onClose={() => setApproachFeetOpen(false)}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <SimpleDropdown
+              label="Inches"
+              valueLabel={approachInches ? `${approachInches} in` : 'Inches'}
+              onPress={() => setApproachInchesOpen(true)}
+            />
+            <DropdownModal
+              visible={approachInchesOpen}
+              title="Inches"
+              options={approachInchesOptions}
+              onSelect={(opt) => setApproachInches(opt.value)}
+              onClose={() => setApproachInchesOpen(false)}
+            />
+          </View>
+        </Row>
+      </Field>
+      <Field label="Takeoff Mark (FT)">
+        {TakeoffDropdown}
+      </Field>
+      <Field label={`Standards setting (${units === 'metric' ? 'cm' : 'in'})`}>
+        {StandardsDropdown}
+      </Field>
+    </Section>
+  );
+
+  return (
+    <Screen>
+      <Section title="New Practice">
+        <Field label="Goals for today">
+          <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., hit 12' mid, tall at takeoff" style={styles.input} />
+        </Field>
+        <Field label="Today's routine (tap to check)">
+          {routine.length ? (
+            <View style={{ gap: 8 }}>
+              {routine.map((item, idx) =>
+                item.isHeader ? (
+                  <Text key={idx} style={{ fontWeight: '800', fontSize: 16, marginTop: 6 }}>
+                    {item.text.replace(/:$/, '')}
+                  </Text>
+                ) : (
+                  <CheckboxChip
+                    key={idx}
+                    checked={!!item.done}
+                    label={item.text}
+                    onToggle={() => toggleCheck(idx)}
+                  />
+                )
+              )}
+              <Row style={{ justifyContent: 'flex-end', marginTop: 4 }}>
+                <ButtonSecondary title="Reset Checks" onPress={resetChecks} />
+              </Row>
+            </View>
+          ) : (
+            <Text style={styles.muted}>No routine items for today.</Text>
           )}
-          <Row style={{ gap: 8 }}>
-            <Field label="Brand">
-              <TextInput
-                value={poleBrand}
-                onChangeText={setPoleBrand}
-                style={[styles.input, { width: 110 }]}
-                placeholder="Brand"
-              />
-            </Field>
-            <Field label="Length">
-              <TextInput
-                value={poleLength}
-                onChangeText={setPoleLength}
-                style={[styles.input, { width: 90 }]}
-                placeholder="Length"
-              />
-            </Field>
-          </Row>
-          <Row style={{ gap: 8 }}>
-            <Field label="Flex">
-              <TextInput
-                value={poleFlex}
-                onChangeText={setPoleFlex}
-                style={[styles.input, { width: 90 }]}
-                placeholder="Flex"
-              />
-            </Field>
-            <Field label="Weight">
-              <TextInput
-                value={poleWeight}
-                onChangeText={setPoleWeight}
-                style={[styles.input, { width: 90 }]}
-                placeholder="Weight"
-              />
-            </Field>
-          </Row>
-          <Field label="Steps">
-            <SimpleDropdown
-              label="Select steps"
-              valueLabel={poleSteps ? `${poleSteps}` : 'Select steps'}
-              onPress={() => setPoleStepsOpen(true)}
-            />
-            <DropdownModal
-              visible={poleStepsOpen}
-              title="Steps"
-              options={stepOptions}
-              onSelect={(opt) => setPoleSteps(opt.value)}
-              onClose={() => setPoleStepsOpen(false)}
-            />
-          </Field>
-          <Field label="Approach">
-            <Row style={{ gap: 8 }}>
-              <View style={{ flex: 1 }}>
-                <SimpleDropdown
-                  label="Feet"
-                  valueLabel={poleApproachFeet ? `${poleApproachFeet} ft` : 'Feet'}
-                  onPress={() => setPoleApproachFeetOpen(true)}
-                />
-                <DropdownModal
-                  visible={poleApproachFeetOpen}
-                  title="Feet"
-                  options={approachFeetOptions}
-                  onSelect={(opt) => setPoleApproachFeet(opt.value)}
-                  onClose={() => setPoleApproachFeetOpen(false)}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <SimpleDropdown
-                  label="Inches"
-                  valueLabel={poleApproachInches ? `${poleApproachInches} in` : 'Inches'}
-                  onPress={() => setPoleApproachInchesOpen(true)}
-                />
-                <DropdownModal
-                  visible={poleApproachInchesOpen}
-                  title="Inches"
-                  options={approachInchesOptions}
-                  onSelect={(opt) => setPoleApproachInches(opt.value)}
-                  onClose={() => setPoleApproachInchesOpen(false)}
-                />
-              </View>
-            </Row>
-          </Field>
-          <Field label="Takeoff Mark (FT)">
-            <SimpleDropdown
-              label="Select takeoff mark"
-              valueLabel={poleTakeoffIn ? `${(poleTakeoffIn / 12).toFixed(2)} ft` : 'Select takeoff mark'}
-              onPress={() => setPoleTakeoffModalOpen(true)}
-            />
-            <DropdownModal
-              visible={poleTakeoffModalOpen}
-              title="Takeoff Mark (ft)"
-              options={takeoffFtOptions}
-              onSelect={(opt) => { setPoleTakeoffIn(opt.value); setPoleTakeoffModalOpen(false); }}
-              onClose={() => setPoleTakeoffModalOpen(false)}
-            />
-          </Field>
-          <Field label={`Standards setting (${units === 'metric' ? 'cm' : 'in'})`}>
-            {units === 'imperial'
-              ? <>
+        </Field>
+        {/* Poles Section */}
+        <Section title="Poles">
+  {poles.length === 0 ? (
+    <Text style={styles.muted}>No poles added yet.</Text>
+  ) : (
+    <>
+      {poles.map((pole, idx) => (
+        <View key={idx} style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flexDirection: 'column' }}>
+            {pole.length ? (
+              <Text style={styles.pText}>
+                Length: {pole.length}
+              </Text>
+            ) : null}
+            {pole.weight ? (
+              <Text style={styles.pText}>
+                Weight: {pole.weight}
+              </Text>
+            ) : null}
+            {pole.flex ? (
+              <Text style={styles.pText}>
+                Flex: {pole.flex}
+              </Text>
+            ) : null}
+          </View>
+          <ButtonSecondary title="Edit" onPress={() => {
+            setEditPoleIdx(idx);
+            setPoleLength(pole.length);
+            setPoleFlex(pole.flex);
+            setPoleWeight(pole.weight);
+            setPoleModalOpen(true);
+          }} />
+          <ButtonSecondary title="Remove" onPress={() => {
+            setPoles(poles.filter((_, i) => i !== idx));
+          }} />
+        </View>
+      ))}
+    </>
+  )}
+  <ButtonPrimary
+    title="Add Pole"
+    onPress={() => {
+      setEditPoleIdx(null);
+      setPoleLength('');
+      setPoleFlex('');
+      setPoleWeight('');
+      setPoleModalOpen(true);
+    }}
+    style={{ alignSelf: 'flex-start' }}
+  />
+</Section>
+        <Modal visible={poleModalOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.sectionTitle}>{editPoleIdx !== null ? "Edit Pole" : "Add Pole"}</Text>
+              {previousPoles.length > 0 && (
+                <Field label="Copy previous pole">
                   <SimpleDropdown
-                    label="Select standards"
-                    valueLabel={poleStandardsIn ? `${poleStandardsIn}"` : 'Select standards'}
-                    onPress={() => setPoleStandardsModalOpen(true)}
+                    label="Select previous pole"
+                    valueLabel=""
+                    onPress={() => setPoleSelectModalOpen(true)}
                   />
                   <DropdownModal
-                    visible={poleStandardsModalOpen}
-                    title="Standards (in)"
-                    options={standardsInOptions}
-                    onSelect={(opt) => { setPoleStandardsIn(opt.value); setPoleStandardsModalOpen(false); }}
-                    onClose={() => setPoleStandardsModalOpen(false)}
+                    visible={poleSelectModalOpen}
+                    title="Select Previous Pole"
+                    options={previousPoles.map((pole, idx) => ({
+                      label: `Pole ${idx + 1}: ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
+                      value: idx
+                    }))}
+                    onSelect={(opt) => {
+                      const p = previousPoles[opt.value];
+                      setPoleLength(p.length || '');
+                      setPoleFlex(p.flex || '');
+                      setPoleWeight(p.weight || '');
+                      setPoleSelectModalOpen(false);
+                    }}
+                    onClose={() => setPoleSelectModalOpen(false)}
                   />
-                </>
-              : <>
-                  <SimpleDropdown
-                    label="Select standards (cm)"
-                    valueLabel={poleStandardsIn ? `${Math.round(poleStandardsIn * 2.54)} cm` : 'Select standards (cm)'}
-                    onPress={() => setPoleStandardsModalOpen(true)}
-                  />
-                  <DropdownModal
-                    visible={poleStandardsModalOpen}
-                    title="Standards (cm)"
-                    options={standardsCmOptions}
-                    onSelect={(opt) => { setPoleStandardsIn(opt.value); setPoleStandardsModalOpen(false); }}
-                    onClose={() => setPoleStandardsModalOpen(false)}
-                  />
-                </>
-            }
-          </Field>
-          <Field label="Hands">
-            <SimpleDropdown
-              label="Select hands"
-              valueLabel={poleHands ? poleHands.toString() : 'Hands'}
-              onPress={() => setPoleHandsOpen(true)}
-            />
-            <DropdownModal
-              visible={poleHandsOpen}
-              title="Hands"
-              options={handsOptions}
-              onSelect={(opt) => { setPoleHands(opt.value); setPoleHandsOpen(false); }}
-              onClose={() => setPoleHandsOpen(false)}
-            />
-          </Field>
-          <Row style={{ justifyContent: 'flex-end', gap: 8 }}>
-            <ButtonSecondary title="Cancel" onPress={() => { setPoleModalOpen(false); setEditPoleIdx(null); }} />
-            <ButtonPrimary title="Save" onPress={() => {
-              if (!poleLength && !poleFlex && !poleWeight) return;
-              const poleObj = {
-                brand: poleBrand,
-                length: poleLength,
-                flex: poleFlex,
-                weight: poleWeight,
-                steps: poleSteps,
-                approachFeet: poleApproachFeet,
-                approachInches: poleApproachInches,
-                takeoffIn: poleTakeoffIn,
-                standardsIn: poleStandardsIn,
-                hands: poleHands
-              };
-              if (editPoleIdx !== null) {
-                setPoles(poles.map((p, i) => i === editPoleIdx ? poleObj : p));
-              } else {
-                setPoles([...poles, poleObj]);
-              }
-              setPoleModalOpen(false);
-              setEditPoleIdx(null);
-              setPoleBrand('');
-              setPoleLength('');
-              setPoleFlex('');
-              setPoleWeight('');
-              setPoleSteps('');
-              setPoleApproachFeet('');
-              setPoleApproachInches('');
-              setPoleTakeoffIn('');
-              setPoleStandardsIn('');
-              setPoleHands('');
-            }} />
+                </Field>
+              )}
+              <Field label="Length (ft/in or cm)">
+                <TextInput value={poleLength} onChangeText={setPoleLength} placeholder='e.g., 13"' style={styles.input} />
+              </Field>
+              <Field label="Flex Number">
+                <TextInput value={poleFlex} onChangeText={setPoleFlex} placeholder="e.g., 16.8" style={styles.input} />
+              </Field>
+              <Field label="Weight Rating (lbs or kg)">
+                <TextInput value={poleWeight} onChangeText={setPoleWeight} placeholder="e.g., 155 lbs" style={styles.input} />
+              </Field>
+              <Row style={{ justifyContent: 'flex-end', gap: 8 }}>
+                <ButtonSecondary title="Cancel" onPress={() => { setPoleModalOpen(false); setEditPoleIdx(null); }} />
+                <ButtonPrimary title="Save" onPress={() => {
+                  if (!poleLength && !poleFlex && !poleWeight) return;
+                  const poleObj = { length: poleLength, flex: poleFlex, weight: poleWeight };
+                  if (editPoleIdx !== null) {
+                    setPoles(poles.map((p, i) => i === editPoleIdx ? poleObj : p));
+                  } else {
+                    setPoles([...poles, poleObj]);
+                  }
+                  setPoleModalOpen(false);
+                  setEditPoleIdx(null);
+                }} />
+              </Row>
+            </View>
+          </View>
+        </Modal>
+        {/* Heights & Attempts Section */}
+        <Section title="Heights & Attempts">
+          <Text style={[styles.muted, { marginBottom: 8 }]}>
+            Add multiple heights for this practice. Each height has 3 attempts. Heights are listed below. Assign a pole for each height.
+          </Text>
+          {HeightAddUI}
+          {heights.length ? (
+    heights.map((h) => (
+      <View key={h.id} style={styles.cardRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.fieldLabel}>Height</Text>
+          <Text style={styles.pText}>{fmtBar(h.heightIn, units)}</Text>
+          {h.poleIdx !== undefined && poles[h.poleIdx] ? (
+            <Text style={styles.muted}>
+              Pole Used: Length {poles[h.poleIdx].length}, Flex {poles[h.poleIdx].flex}, Weight {poles[h.poleIdx].weight}
+            </Text>
+          ) : null}
+        </View>
+        <View style={{ width: 16 }} />
+        <View style={{ flex: 2 }}>
+          <Text style={styles.fieldLabel}>Attempts</Text>
+          <Row style={{ flexWrap: 'wrap' }}>
+            {h.attempts.map((a, i) => {
+              const clearIdx = h.attempts.findIndex(at => at.result === 'clear');
+              if (clearIdx !== -1 && i > clearIdx) return null;
+              return (
+                <View key={a.idx} style={{ marginRight: 12 }}>
+                  <Text>Attempt {a.idx}</Text>
+                  <Row>
+                    <Pressable
+                      onPress={() => {
+                        // Only allow "O" if no clear yet
+                        if (clearIdx === -1) updateAttemptResult(h.id, a.idx, 'clear');
+                      }}
+                      style={[
+                        styles.choice,
+                        a.result === 'clear' && styles.choiceOn,
+                        { zIndex: 10 }
+                      ]}
+                    >
+                      <Text style={[styles.choiceText, a.result === 'clear' && styles.choiceTextOn]}>O</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        // Only allow "X" if no clear yet, or if before the clear
+                        if (clearIdx === -1 || i < clearIdx) updateAttemptResult(h.id, a.idx, 'miss');
+                      }}
+                      style={[
+                        styles.choice,
+                        a.result === 'miss' && styles.choiceOnMiss,
+                        { zIndex: 10 }
+                      ]}
+                    >
+                      <Text style={[styles.choiceText, a.result === 'miss' && styles.choiceTextOn]}>
+                        {clearIdx === -1 || i < clearIdx ? 'X' : ''}
+                      </Text>
+                    </Pressable>
+                    <SimpleDropdown
+                      label="Attempt Type"
+                      valueLabel={a.type === 'bungee' ? 'Bungee' : 'Bar'}
+                      onPress={() =>
+                        setAttemptTypeDropdownOpen({
+                          ...attemptTypeDropdownOpen,
+                          [`${h.id}-${a.idx}`]: true,
+                        })
+                      }
+                    />
+                    <DropdownModal
+                      visible={attemptTypeDropdownOpen[`${h.id}-${a.idx}`]}
+                      title="Attempt Type"
+                      options={[
+                        { label: 'Bar', value: 'bar' },
+                        { label: 'Bungee', value: 'bungee' },
+                      ]}
+                      onSelect={(opt) => {
+                        setHeights((arr) =>
+                          arr.map((height) =>
+                            height.id !== h.id
+                              ? height
+                              : {
+                                  ...height,
+                                  attempts: height.attempts.map((at) =>
+                                    at.idx === a.idx ? { ...at, type: opt.value } : at
+                                  ),
+                                }
+                          )
+                        );
+                        setAttemptTypeDropdownOpen((open) => ({
+                          ...open,
+                          [`${h.id}-${a.idx}`]: false,
+                        }));
+                      }}
+                      onClose={() =>
+                        setAttemptTypeDropdownOpen((open) => ({
+                          ...open,
+                          [`${h.id}-${a.idx}`]: false,
+                        }))
+                      }
+                    />
+                  </Row>
+                </View>
+              );
+            })}
+            <Pressable onPress={() => removeHeight(h.id)} style={[styles.choice, { backgroundColor: '#eee', zIndex: 10 }]}>
+              <Text style={[styles.choiceText, { color: '#333' }]}>Remove</Text>
+            </Pressable>
           </Row>
         </View>
       </View>
-    </Modal>
-  );
-
-  // Save logic
-  const save = () => {
-    const sess = {
-      id: shortId(),
-      type: 'practice',
-      date,
-      dayName: dayNameStr,
-      goals,
-      poles,
-      heights,
-      notes,
-      routine: routine.map(({ text, done, isHeader }) => ({ text, done: !!done, isHeader: !!isHeader })),
-    };
-    add(sess);
-    Alert.alert('Practice Saved!', 'Your practice session has been logged.');
-    navigation.goBack();
-  };
-
-  return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 16 }}>
-        <Section title="New Practice">
-          <Field label="Goals for today">
-            <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., hit 12' mid, tall at takeoff" style={styles.input} />
-          </Field>
-          <Field label="Today's routine (tap to check)">
-            {routine.length ? (
-              <View style={{ gap: 8 }}>
-                {routine.map((item, idx) =>
-                  item.isHeader ? (
-                    <Text key={idx} style={{ fontWeight: '800', fontSize: 16, marginTop: 6 }}>
-                      {item.text.replace(/:$/, '')}
-                    </Text>
-                  ) : (
-                    <CheckboxChip
-                      key={idx}
-                      checked={!!item.done}
-                      label={item.text}
-                      onToggle={() => setRoutine(list => list.map((it, i) => i === idx && !it.isHeader ? { ...it, done: !it.done } : it))}
-                    />
-                  )
-                )}
-              </View>
-            ) : (
-              <Text style={styles.muted}>No routine items for today.</Text>
-            )}
-          </Field>
-          <Section title="Poles">
-            {poles.length === 0 ? (
-              <Text style={styles.muted}>No poles added yet.</Text>
-            ) : (
-              <>
-                {poles.map((pole, idx) => (
-                  <View key={idx} style={{ marginBottom: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#eee' }}>
-                    <Row style={{ gap: 14 }}>
-                      <Text style={styles.pText}>
-                        {pole.brand ? `Brand: ${pole.brand}` : ''}
-                        {pole.length ? `   Length: ${pole.length}` : ''}
-                      </Text>
-                    </Row>
-                    <Row style={{ gap: 14 }}>
-                      <Text style={styles.pText}>
-                        {pole.flex ? `Flex: ${pole.flex}` : ''}
-                        {pole.weight ? `   Weight: ${pole.weight}` : ''}
-                      </Text>
-                    </Row>
-                    <Text style={styles.muted}>
-                      Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-                    </Text>
-                    <Row style={{ justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-                      <ButtonSecondary
-                        title="Edit"
-                        onPress={() => {
-                          setEditPoleIdx(idx);
-                          setPoleBrand(pole.brand);
-                          setPoleLength(pole.length);
-                          setPoleFlex(pole.flex);
-                          setPoleWeight(pole.weight);
-                          setPoleSteps(pole.steps);
-                          setPoleApproachFeet(pole.approachFeet);
-                          setPoleApproachInches(pole.approachInches);
-                          setPoleTakeoffIn(pole.takeoffIn);
-                          setPoleStandardsIn(pole.standardsIn);
-                          setPoleHands(pole.hands);
-                          setPoleModalOpen(true);
-                        }}
-                        style={{ marginBottom: 4 }}
-                      />
-                      <ButtonSecondary
-                        title="Remove"
-                        onPress={() => setPoles(poles.filter((_, i) => i !== idx))}
-                      />
-                    </Row>
-                  </View>
-                ))}
-              </>
-            )}
-            <ButtonPrimary title="Add Pole" onPress={() => {
-              setEditPoleIdx(null);
-              setPoleBrand('');
-              setPoleLength('');
-              setPoleFlex('');
-              setPoleWeight('');
-              setPoleSteps('');
-              setPoleApproachFeet('');
-              setPoleApproachInches('');
-              setPoleTakeoffIn('');
-              setPoleStandardsIn('');
-              setPoleHands('');
-              setPoleModalOpen(true);
-            }} style={{ alignSelf: 'flex-start', marginTop: 4 }} />
-          </Section>
-          {PoleModal}
-          <Section title="Heights & Attempts">
-            <Text style={[styles.muted, { marginBottom: 8 }]}>
-              Add multiple heights for this practice. Each height has 3 attempts and must be assigned a pole.
-            </Text>
-            {HeightAddUI}
-            {heights.length ? (
-              heights.map((h, heightIdx) => {
-                const pole = h.poleIdx !== undefined && poles[h.poleIdx] ? poles[h.poleIdx] : null;
-                return (
-                  <View key={h.id} style={styles.cardRow}>
-                    <Text style={styles.fieldLabel}>Height</Text>
-                    <Text style={styles.pText}>{fmtBar(h.heightIn, units)}</Text>
-                    {pole ? (
-                      <View style={{ marginBottom: 6 }}>
-                        <Text style={styles.fieldLabel}>Pole Used</Text>
-                        <Row style={{ gap: 14 }}>
-                          <Text style={styles.pText}>
-                            {pole.brand ? `Brand: ${pole.brand}` : ''}
-                            {pole.length ? `   Length: ${pole.length}` : ''}
-                          </Text>
-                        </Row>
-                        <Row style={{ gap: 14 }}>
-                          <Text style={styles.pText}>
-                            {pole.flex ? `Flex: ${pole.flex}` : ''}
-                            {pole.weight ? `   Weight: ${pole.weight}` : ''}
-                          </Text>
-                        </Row>
-                        <Text style={styles.muted}>
-                          Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet) * 12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-                        </Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.muted}>No pole assigned.</Text>
-                    )}
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-                      {h.attempts.map((attempt, attemptIdx) => (
-                        <Pressable
-                          key={attemptIdx}
-                          onPress={() => {
-                            setHeights(heightsArr => heightsArr.map((heightItem, i) =>
-                              i === heightIdx
-                                ? {
-                                    ...heightItem,
-                                    attempts: heightItem.attempts.map((a, j) =>
-                                      j === attemptIdx
-                                        ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
-                                        : a
-                                    )
-                                  }
-                                : heightItem
-                            ));
-                          }}
-                          style={{
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 8,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: attempt.result === 'clear' ? 'green' : 'red',
-                            backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
-                            minWidth: 56,
-                            marginRight: 8,
-                          }}>
-                          <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
-                            {attempt.result === 'clear' ? 'O' : 'X'}
-                          </Text>
-                          <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-                );
-              })
-            ) : (
-              <Text style={styles.muted}>No heights added yet.</Text>
-            )}
-          </Section>
-          <Field label="Notes">
-            <TextInput value={notes} onChangeText={setNotes} placeholder="session notes…" style={[styles.input, { height: 90 }]} multiline />
-          </Field>
-          <ButtonPrimary title="Save Practice" onPress={save} />
+    ))
+  ) : (
+    <Text style={styles.muted}>No heights added yet.</Text>
+  )}
         </Section>
-      </ScrollView>
-    </SafeAreaView>
+        {SetupBlock}
+        <Field label="Notes">
+          <TextInput value={notes} onChangeText={setNotes} placeholder="session notes…" style={[styles.input, { height: 90 }]} multiline />
+        </Field>
+        <Row style={{ gap: 8, marginTop: 8 }}>
+          <TextInput value={email} onChangeText={setEmail} placeholder="coach@example.com" autoCapitalize="none" keyboardType="email-address" style={[styles.input, { flex: 1 }]} />
+          <ButtonSecondary title="Email" onPress={handleEmail} />
+        </Row>
+        <View style={{ height: 10 }} />
+        <ButtonPrimary title="Save Practice" onPress={save} />
+      </Section>
+    </Screen>
   );
 }
-
 function MeetFormScreen({ navigation }) {
-  const { units } = usePVStore((s) => s.settings);
+  const { units, athlete } = usePVStore((s) => s.settings);
   const add = usePVStore((s) => s.addSession);
-  const allSessions = usePVStore((s) => s.sessions);
 
   const [date] = useState(new Date().toISOString());
   const [meetName, setMeetName] = useState('');
   const [goals, setGoals] = useState('');
   const [notes, setNotes] = useState('');
+  const [email, setEmail] = useState('');
+  const settings = usePVStore((s) => s.settings);
+  const [attemptTypeDropdownOpen, setAttemptTypeDropdownOpen] = useState({});
+
+  // Steps dropdown 1–15
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const [steps, setSteps] = useState('');
+
+  // Approach dropdowns
+  const [approachFeet, setApproachFeet] = useState(0);
+  const [approachInches, setApproachInches] = useState(0);
+  const [approachFeetOpen, setApproachFeetOpen] = useState(false);
+  const [approachInchesOpen, setApproachInchesOpen] = useState(false);
+
+  // Takeoff & standards dropdowns
+  const [takeoffModalOpen, setTakeoffModalOpen] = useState(false);
+  const [takeoffIn, setTakeoffIn] = useState(0);
+  const [standardsModalOpen, setStandardsModalOpen] = useState(false);
+  const [standardsIn, setStandardsIn] = useState(0);
+
+  // Poles logic
+  const [poles, setPoles] = useState([]);
+  const [poleModalOpen, setPoleModalOpen] = useState(false);
+  const [poleLength, setPoleLength] = useState('');
+  const [poleFlex, setPoleFlex] = useState('');
+  const [poleWeight, setPoleWeight] = useState('');
+  const [editPoleIdx, setEditPoleIdx] = useState(null);
+  const allSessions = usePVStore((s) => s.sessions);
+
+  // Gather all poles from all sessions
+  const previousPoles = useMemo(() => {
+    const polesArr = [];
+    (allSessions || []).forEach(sess => {
+      if (Array.isArray(sess.poles)) {
+        sess.poles.forEach(p => {
+          const key = `${p.length || ''}|${p.flex || ''}|${p.weight || ''}`;
+          polesArr.push({ ...p, _key: key });
+        });
+      }
+    });
+    const seen = new Set();
+    const deduped = [];
+    for (const p of polesArr) {
+      if (p._key && !seen.has(p._key)) {
+        deduped.push(p);
+        seen.add(p._key);
+      }
+    }
+    return deduped;
+  }, [allSessions]);
 
   // Heights logic
   const [heights, setHeights] = useState([]);
@@ -1649,60 +1680,22 @@ function MeetFormScreen({ navigation }) {
   const [ftModalOpen, setFtModalOpen] = useState(false);
   const [inModalOpen, setInModalOpen] = useState(false);
   const [mModalOpen, setMModalOpen] = useState(false);
+  // For assigning pole to height
   const [addHeightPoleIdx, setAddHeightPoleIdx] = useState(null);
   const [poleSelectModalOpen, setPoleSelectModalOpen] = useState(false);
 
-  // Poles logic + full per-pole setup
-  const [poles, setPoles] = useState([]);
-  const [poleModalOpen, setPoleModalOpen] = useState(false);
-  const [poleBrand, setPoleBrand] = useState('');
-  const [poleLength, setPoleLength] = useState('');
-  const [poleFlex, setPoleFlex] = useState('');
-  const [poleWeight, setPoleWeight] = useState('');
-  const [poleSteps, setPoleSteps] = useState('');
-  const [poleApproachFeet, setPoleApproachFeet] = useState('');
-  const [poleApproachInches, setPoleApproachInches] = useState('');
-  const [poleTakeoffIn, setPoleTakeoffIn] = useState('');
-  const [poleStandardsIn, setPoleStandardsIn] = useState('');
-  const [poleHands, setPoleHands] = useState('');
-  const [poleStepsOpen, setPoleStepsOpen] = useState(false);
-  const [poleApproachFeetOpen, setPoleApproachFeetOpen] = useState(false);
-  const [poleApproachInchesOpen, setPoleApproachInchesOpen] = useState(false);
-  const [poleTakeoffModalOpen, setPoleTakeoffModalOpen] = useState(false);
-  const [poleStandardsModalOpen, setPoleStandardsModalOpen] = useState(false);
-  const [poleHandsOpen, setPoleHandsOpen] = useState(false);
-  const [editPoleIdx, setEditPoleIdx] = useState(null);
-
-  // Previous poles from all sessions (deduplicated)
-  const previousPoles = useMemo(() => {
-    const polesArr = [];
-    (allSessions || []).forEach(sess => {
-      if (Array.isArray(sess.poles)) {
-        sess.poles.forEach(p => {
-          const key = `${p.brand || ''}|${p.length || ''}|${p.flex || ''}|${p.weight || ''}`;
-          polesArr.push({ ...p, _key: key });
-        });
-      }
-    });
-    const seen = new Set();
-    const deduped = [];
-    for (const p of polesArr) {
-      if (p._key && !seen.has(p._key)) {
-        deduped.push(p);
-        seen.add(p._key);
-      }
-    }
-    return deduped;
-  }, [allSessions]);
-  const [recentPoleSelectOpen, setRecentPoleSelectOpen] = useState(false);
-
   // Dropdown options
+  const APPROACH_MAX_FEET = 150;
   const stepOptions = useMemo(() => Array.from({ length: 15 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) })), []);
-  const approachFeetOptions = useMemo(() => Array.from({ length: 150 }, (_, i) => ({ label: `${i + 1} ft`, value: i + 1 })), []);
+  const approachFeetOptions = useMemo(() => Array.from({ length: APPROACH_MAX_FEET }, (_, i) => ({ label: `${i + 1} ft`, value: i + 1 })), []);
   const approachInchesOptions = useMemo(() => Array.from({ length: 11 }, (_, i) => ({ label: `${i + 1} in`, value: i + 1 })), []);
   const takeoffFtOptions = useMemo(() => Array.from({ length: ((15 - 2) / 0.25) + 1 }, (_, i) => {
     const ft = 2 + i * 0.25;
     return { label: `${ft.toFixed(2)} ft`, value: Math.round(ft * 12) };
+  }), []);
+  const takeoffCmOptions = useMemo(() => Array.from({ length: (85 - 40) + 1 }, (_, i) => {
+    const cm = 40 + i;
+    return { label: `${cm} cm`, value: (cm / 2.54) };
   }), []);
   const standardsInOptions = useMemo(() => Array.from({ length: ((31.5 - 18) / 0.5) + 1 }, (_, i) => {
     const val = 18 + i * 0.5;
@@ -1718,19 +1711,184 @@ function MeetFormScreen({ navigation }) {
     const arr = [];
     for (let i = 152; i <= 609.6; i += 1) {
       const m = i / 100;
-      arr.push({ label: `${m.toFixed(2)}`, value: m });
-    }
-    return arr;
-  }, []);
-  const handsOptions = useMemo(() => {
-    const arr = [];
-    for (let val = 1; val <= 10; val += 0.25) {
-      arr.push({ label: val.toFixed(2), value: val });
+      arr.push({ label: `${m.toFixed(2).replace(/\.?0+$/,'')} m`, value: m });
     }
     return arr;
   }, []);
 
-  // Heights add UI (with pole selector)
+  // Height addition logic (pole selection required!)
+  const handleAddHeightImperial = () => {
+  const ft = Number(addHeightFt);
+  const inch = Number(addHeightIn);
+  if ((!ft && !inch) || isNaN(ft) || isNaN(inch)) return Alert.alert('Select a valid height');
+  if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
+  const totalIn = ft * 12 + inch;
+  setHeights((arr) => [
+    ...arr,
+    {
+      id: shortId(),
+      heightIn: totalIn,
+      attempts: [
+        { result: 'miss', idx: 1, type: 'bar' },
+        { result: 'miss', idx: 2, type: 'bar' },
+        { result: 'miss', idx: 3, type: 'bar' }
+      ],
+      poleIdx: addHeightPoleIdx
+    }
+  ]);
+  setAddHeightFt('');
+  setAddHeightIn('');
+  setAddHeightPoleIdx(null);
+};
+  const handleAddHeightMetric = () => {
+  const m = Number(addHeightM);
+  if (!m || isNaN(m)) return Alert.alert('Select a valid height');
+  if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
+  setHeights((arr) => [
+    ...arr,
+    {
+      id: shortId(),
+      heightIn: m * 39.3701, // meters to inches
+      attempts: [
+        { result: 'miss', idx: 1, type: 'bar' },
+        { result: 'miss', idx: 2, type: 'bar' },
+        { result: 'miss', idx: 3, type: 'bar' }
+      ],
+      poleIdx: addHeightPoleIdx
+    }
+  ]);
+  setAddHeightM('');
+  setAddHeightPoleIdx(null);
+};
+
+  // Update attempt for a height
+  const updateAttemptResult = (heightId, attemptIdx, result) => {
+    setHeights((arr) =>
+      arr.map((height) => {
+        if (height.id !== heightId) return height;
+        if (result === 'clear') {
+          return {
+            ...height,
+            attempts: height.attempts.map((a) =>
+              a.idx === attemptIdx ? { ...a, result: 'clear' } : a
+            ),
+            completed: true
+          };
+        } else {
+          if (height.attempts.some(a => a.result === 'clear')) return height;
+          return {
+            ...height,
+            attempts: height.attempts.map((a) =>
+              a.idx === attemptIdx ? { ...a, result: 'miss' } : a
+            )
+          };
+        }
+      })
+    );
+  };
+
+  // Remove height entry
+  const removeHeight = (heightId) => setHeights((arr) => (arr || []).filter((h) => h.id !== heightId));
+
+  // Setup block
+  const SetupBlock = (
+    <Section title="Setup used">
+      <Field label="Steps">
+        <SimpleDropdown
+          label="Select steps"
+          valueLabel={steps ? `${steps}` : 'Select steps'}
+          onPress={() => setStepsOpen(true)}
+        />
+        <DropdownModal
+          visible={stepsOpen}
+          title="Steps"
+          options={stepOptions}
+          onSelect={(opt) => setSteps(opt.value)}
+          onClose={() => setStepsOpen(false)}
+        />
+      </Field>
+      <Field label="Approach">
+        <Row style={{ gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <SimpleDropdown
+              label="Feet"
+              valueLabel={approachFeet ? `${approachFeet} ft` : 'Feet'}
+              onPress={() => setApproachFeetOpen(true)}
+            />
+            <DropdownModal
+              visible={approachFeetOpen}
+              title="Feet"
+              options={approachFeetOptions}
+              onSelect={(opt) => setApproachFeet(opt.value)}
+              onClose={() => setApproachFeetOpen(false)}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <SimpleDropdown
+              label="Inches"
+              valueLabel={approachInches ? `${approachInches} in` : 'Inches'}
+              onPress={() => setApproachInchesOpen(true)}
+            />
+            <DropdownModal
+              visible={approachInchesOpen}
+              title="Inches"
+              options={approachInchesOptions}
+              onSelect={(opt) => setApproachInches(opt.value)}
+              onClose={() => setApproachInchesOpen(false)}
+            />
+          </View>
+        </Row>
+      </Field>
+      <Field label="Takeoff Mark (FT)">
+        <SimpleDropdown
+          label="Select takeoff mark"
+          valueLabel={takeoffIn ? `${(takeoffIn / 12).toFixed(2)} ft` : 'Select takeoff mark'}
+          onPress={() => setTakeoffModalOpen(true)}
+        />
+        <DropdownModal
+          visible={takeoffModalOpen}
+          title="Takeoff Mark (ft)"
+          options={takeoffFtOptions}
+          onSelect={(opt) => { setTakeoffIn(opt.value); setTakeoffModalOpen(false); }}
+          onClose={() => setTakeoffModalOpen(false)}
+        />
+      </Field>
+      <Field label={`Standards setting (${units === 'metric' ? 'cm' : 'in'})`}>
+        {units === 'imperial'
+          ? <>
+              <SimpleDropdown
+                label="Select standards"
+                valueLabel={standardsIn ? `${standardsIn}"` : 'Select standards'}
+                onPress={() => setStandardsModalOpen(true)}
+              />
+              <DropdownModal
+                visible={standardsModalOpen}
+                title="Standards (in)"
+                options={standardsInOptions}
+                onSelect={(opt) => { setStandardsIn(opt.value); setStandardsModalOpen(false); }}
+                onClose={() => setStandardsModalOpen(false)}
+              />
+            </>
+          : <>
+              <SimpleDropdown
+                label="Select standards (cm)"
+                valueLabel={standardsIn ? `${Math.round(standardsIn * 2.54)} cm` : 'Select standards (cm)'}
+                onPress={() => setStandardsModalOpen(true)}
+              />
+              <DropdownModal
+                visible={standardsModalOpen}
+                title="Standards (cm)"
+                options={standardsCmOptions}
+                onSelect={(opt) => { setStandardsIn(opt.value); setStandardsModalOpen(false); }}
+                onClose={() => setStandardsModalOpen(false)}
+              />
+            </>
+        }
+      </Field>
+    </Section>
+  );
+
+  // Heights UI (with pole selector)
   const HeightAddUI =
     units === 'imperial' ? (
       <View>
@@ -1763,7 +1921,7 @@ function MeetFormScreen({ navigation }) {
             label="Pole Used"
             valueLabel={
               addHeightPoleIdx !== null && poles[addHeightPoleIdx]
-                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].brand || ''} ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
+                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
                 : 'Select Pole'
             }
             onPress={() => setPoleSelectModalOpen(true)}
@@ -1772,7 +1930,7 @@ function MeetFormScreen({ navigation }) {
             visible={poleSelectModalOpen}
             title="Select Pole"
             options={poles.map((pole, idx) => ({
-              label: `Pole ${idx + 1}: ${pole.brand || ''} ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
+              label: `Pole ${idx + 1}: ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
               value: idx
             }))}
             onSelect={(opt) => {
@@ -1784,29 +1942,7 @@ function MeetFormScreen({ navigation }) {
         </Row>
         <ButtonPrimary
           title="Add Height"
-          onPress={() => {
-            const ft = Number(addHeightFt);
-            const inch = Number(addHeightIn);
-            if ((!ft && !inch) || isNaN(ft) || isNaN(inch)) return Alert.alert('Select a valid height');
-            if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
-            const totalIn = ft * 12 + inch;
-            setHeights((arr) => [
-              ...arr,
-              {
-                id: shortId(),
-                heightIn: totalIn,
-                attempts: [
-                  { result: 'miss', idx: 1, type: 'bar' },
-                  { result: 'miss', idx: 2, type: 'bar' },
-                  { result: 'miss', idx: 3, type: 'bar' }
-                ],
-                poleIdx: addHeightPoleIdx
-              }
-            ]);
-            setAddHeightFt('');
-            setAddHeightIn('');
-            setAddHeightPoleIdx(null);
-          }}
+          onPress={handleAddHeightImperial}
           style={{
             marginTop: 8,
             alignSelf: 'flex-start',
@@ -1836,7 +1972,7 @@ function MeetFormScreen({ navigation }) {
             label="Pole Used"
             valueLabel={
               addHeightPoleIdx !== null && poles[addHeightPoleIdx]
-                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].brand || ''} ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
+                ? `Pole ${addHeightPoleIdx + 1}: ${poles[addHeightPoleIdx].length || ''} ${poles[addHeightPoleIdx].flex || ''} ${poles[addHeightPoleIdx].weight || ''}`
                 : 'Select Pole'
             }
             onPress={() => setPoleSelectModalOpen(true)}
@@ -1845,7 +1981,7 @@ function MeetFormScreen({ navigation }) {
             visible={poleSelectModalOpen}
             title="Select Pole"
             options={poles.map((pole, idx) => ({
-              label: `Pole ${idx + 1}: ${pole.brand || ''} ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
+              label: `Pole ${idx + 1}: ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
               value: idx
             }))}
             onSelect={(opt) => {
@@ -1857,26 +1993,7 @@ function MeetFormScreen({ navigation }) {
         </Row>
         <ButtonPrimary
           title="Add Height"
-          onPress={() => {
-            const m = Number(addHeightM);
-            if (!m || isNaN(m)) return Alert.alert('Select a valid height');
-            if (addHeightPoleIdx === null) return Alert.alert('Select a pole for this height');
-            setHeights((arr) => [
-              ...arr,
-              {
-                id: shortId(),
-                heightIn: m * 39.3701,
-                attempts: [
-                  { result: 'miss', idx: 1, type: 'bar' },
-                  { result: 'miss', idx: 2, type: 'bar' },
-                  { result: 'miss', idx: 3, type: 'bar' }
-                ],
-                poleIdx: addHeightPoleIdx
-              }
-            ]);
-            setAddHeightM('');
-            setAddHeightPoleIdx(null);
-          }}
+          onPress={handleAddHeightMetric}
           style={{
             marginTop: 8,
             alignSelf: 'flex-start',
@@ -1890,411 +2007,311 @@ function MeetFormScreen({ navigation }) {
       </View>
     );
 
-  // FULL POLE MODAL (with copy previous pole)
-  const PoleModal = (
-    <Modal visible={poleModalOpen} transparent animationType="slide">
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalCard}>
-          <Text style={styles.sectionTitle}>{editPoleIdx !== null ? "Edit Pole" : "Add Pole"}</Text>
-          {previousPoles.length > 0 && (
-            <Field label="Copy previous pole">
-              <SimpleDropdown
-                label="Select previous pole"
-                valueLabel=""
-                onPress={() => setRecentPoleSelectOpen(true)}
-              />
-              <DropdownModal
-                visible={recentPoleSelectOpen}
-                title="Select Previous Pole"
-                options={previousPoles.map((pole, idx) => ({
-                  label: `Pole ${idx + 1}: ${pole.brand || ''} ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
-                  value: idx
-                }))}
-                onSelect={(opt) => {
-                  const p = previousPoles[opt.value];
-                  setPoleBrand(p.brand || '');
-                  setPoleLength(p.length || '');
-                  setPoleFlex(p.flex || '');
-                  setPoleWeight(p.weight || '');
-                  setPoleSteps(p.steps || '');
-                  setPoleApproachFeet(p.approachFeet || '');
-                  setPoleApproachInches(p.approachInches || '');
-                  setPoleTakeoffIn(p.takeoffIn || '');
-                  setPoleStandardsIn(p.standardsIn || '');
-                  setPoleHands(p.hands || '');
-                  setRecentPoleSelectOpen(false);
-                }}
-                onClose={() => setRecentPoleSelectOpen(false)}
-              />
-            </Field>
-          )}
-          <Row style={{ gap: 8 }}>
-  <Field label="Brand">
-    <TextInput
-      value={poleBrand}
-      onChangeText={setPoleBrand}
-      style={[styles.input, { width: 110 }]}
-      placeholder="Brand"
-    />
-  </Field>
-  <Field label="Length">
-    <TextInput
-      value={poleLength}
-      onChangeText={setPoleLength}
-      style={[styles.input, { width: 90 }]}
-      placeholder="Length"
-    />
-  </Field>
-</Row>
-<Row style={{ gap: 8 }}>
-  <Field label="Flex">
-    <TextInput
-      value={poleFlex}
-      onChangeText={setPoleFlex}
-      style={[styles.input, { width: 90 }]}
-      placeholder="Flex"
-    />
-  </Field>
-  <Field label="Weight">
-    <TextInput
-      value={poleWeight}
-      onChangeText={setPoleWeight}
-      style={[styles.input, { width: 90 }]}
-      placeholder="Weight"
-    />
-  </Field>
-</Row>
-          {/* Steps dropdown */}
-          <Field label="Steps">
-            <SimpleDropdown
-              label="Select steps"
-              valueLabel={poleSteps ? `${poleSteps}` : 'Select steps'}
-              onPress={() => setPoleStepsOpen(true)}
-            />
-            <DropdownModal
-              visible={poleStepsOpen}
-              title="Steps"
-              options={stepOptions}
-              onSelect={(opt) => setPoleSteps(opt.value)}
-              onClose={() => setPoleStepsOpen(false)}
-            />
-          </Field>
-          {/* Approach dropdowns */}
-          <Field label="Approach">
-            <Row style={{ gap: 8 }}>
-              <View style={{ flex: 1 }}>
-                <SimpleDropdown
-                  label="Feet"
-                  valueLabel={poleApproachFeet ? `${poleApproachFeet} ft` : 'Feet'}
-                  onPress={() => setPoleApproachFeetOpen(true)}
-                />
-                <DropdownModal
-                  visible={poleApproachFeetOpen}
-                  title="Feet"
-                  options={approachFeetOptions}
-                  onSelect={(opt) => setPoleApproachFeet(opt.value)}
-                  onClose={() => setPoleApproachFeetOpen(false)}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <SimpleDropdown
-                  label="Inches"
-                  valueLabel={poleApproachInches ? `${poleApproachInches} in` : 'Inches'}
-                  onPress={() => setPoleApproachInchesOpen(true)}
-                />
-                <DropdownModal
-                  visible={poleApproachInchesOpen}
-                  title="Inches"
-                  options={approachInchesOptions}
-                  onSelect={(opt) => setPoleApproachInches(opt.value)}
-                  onClose={() => setPoleApproachInchesOpen(false)}
-                />
-              </View>
-            </Row>
-          </Field>
-          {/* Takeoff mark dropdown */}
-          <Field label="Takeoff Mark (FT)">
-            <SimpleDropdown
-              label="Select takeoff mark"
-              valueLabel={poleTakeoffIn ? `${(poleTakeoffIn / 12).toFixed(2)} ft` : 'Select takeoff mark'}
-              onPress={() => setPoleTakeoffModalOpen(true)}
-            />
-            <DropdownModal
-              visible={poleTakeoffModalOpen}
-              title="Takeoff Mark (ft)"
-              options={takeoffFtOptions}
-              onSelect={(opt) => { setPoleTakeoffIn(opt.value); setPoleTakeoffModalOpen(false); }}
-              onClose={() => setPoleTakeoffModalOpen(false)}
-            />
-          </Field>
-          {/* Standards dropdown */}
-          <Field label={`Standards setting (${units === 'metric' ? 'cm' : 'in'})`}>
-            {units === 'imperial'
-              ? <>
-                  <SimpleDropdown
-                    label="Select standards"
-                    valueLabel={poleStandardsIn ? `${poleStandardsIn}"` : 'Select standards'}
-                    onPress={() => setPoleStandardsModalOpen(true)}
-                  />
-                  <DropdownModal
-                    visible={poleStandardsModalOpen}
-                    title="Standards (in)"
-                    options={standardsInOptions}
-                    onSelect={(opt) => { setPoleStandardsIn(opt.value); setPoleStandardsModalOpen(false); }}
-                    onClose={() => setPoleStandardsModalOpen(false)}
-                  />
-                </>
-              : <>
-                  <SimpleDropdown
-                    label="Select standards (cm)"
-                    valueLabel={poleStandardsIn ? `${Math.round(poleStandardsIn * 2.54)} cm` : 'Select standards (cm)'}
-                    onPress={() => setPoleStandardsModalOpen(true)}
-                  />
-                  <DropdownModal
-                    visible={poleStandardsModalOpen}
-                    title="Standards (cm)"
-                    options={standardsCmOptions}
-                    onSelect={(opt) => { setPoleStandardsIn(opt.value); setPoleStandardsModalOpen(false); }}
-                    onClose={() => setPoleStandardsModalOpen(false)}
-                  />
-                </>
-            }
-          </Field>
-          {/* Hands dropdown */}
-          <Field label="Hands">
-            <SimpleDropdown
-              label="Select hands"
-              valueLabel={poleHands ? poleHands.toString() : 'Hands'}
-              onPress={() => setPoleHandsOpen(true)}
-            />
-            <DropdownModal
-              visible={poleHandsOpen}
-              title="Hands"
-              options={handsOptions}
-              onSelect={(opt) => { setPoleHands(opt.value); setPoleHandsOpen(false); }}
-              onClose={() => setPoleHandsOpen(false)}
-            />
-          </Field>
-          <Row style={{ justifyContent: 'flex-end', gap: 8 }}>
-            <ButtonSecondary title="Cancel" onPress={() => { setPoleModalOpen(false); setEditPoleIdx(null); }} />
-            <ButtonPrimary title="Save" onPress={() => {
-              if (!poleLength && !poleFlex && !poleWeight) return;
-              const poleObj = {
-                brand: poleBrand,
-                length: poleLength,
-                flex: poleFlex,
-                weight: poleWeight,
-                steps: poleSteps,
-                approachFeet: poleApproachFeet,
-                approachInches: poleApproachInches,
-                takeoffIn: poleTakeoffIn,
-                standardsIn: poleStandardsIn,
-                hands: poleHands
-              };
-              if (editPoleIdx !== null) {
-                setPoles(poles.map((p, i) => i === editPoleIdx ? poleObj : p));
-              } else {
-                setPoles([...poles, poleObj]);
-              }
-              setPoleModalOpen(false);
-              setEditPoleIdx(null);
-              setPoleBrand('');
-              setPoleLength('');
-              setPoleFlex('');
-              setPoleWeight('');
-              setPoleSteps('');
-              setPoleApproachFeet('');
-              setPoleApproachInches('');
-              setPoleTakeoffIn('');
-              setPoleStandardsIn('');
-              setPoleHands('');
-            }} />
-          </Row>
-        </View>
-      </View>
-    </Modal>
-  );
+  const handleEmail = async () => {
+    if (!email || !email.includes('@')) {
+      Alert.alert("Invalid email", "Please enter a valid email address.");
+      return;
+    }
+    try {
+      const text = sessionSummaryText({
+        type: 'meet',
+        date,
+        meetName: meetName?.trim() || undefined,
+        goals,
+        attempts: (heights || []).map(({ heightIn, attempts, poleIdx }) => ({
+          heightIn,
+          attempts,
+          poleIdx
+        })),
+        notes,
+        steps: steps ? Number(steps) : undefined,
+        approachIn: toInches({ feet: Number(approachFeet || 0), inches: Number(approachInches || 0) }),
+        takeoffIn: Number(takeoffIn) || 0,
+        standardsIn: Number(standardsIn) || 0,
+        poles,
+      }, settings, athlete);
+      await MailComposer.composeAsync({
+        recipients: [email],
+        subject: 'PoleVault Tracker Meet Session',
+        body: text,
+      });
+    } catch (err) {
+      Alert.alert('Error', 'Could not open email composer.');
+    }
+  };
 
   // Save logic
   const save = () => {
+    const approachIn = toInches({ feet: Number(approachFeet || 0), inches: Number(approachInches || 0) });
     const sess = {
       id: shortId(),
       type: 'meet',
       date,
       meetName: meetName?.trim() || undefined,
       goals,
-      attempts: heights.map(({ heightIn, attempts, poleIdx }) => ({
+      attempts: (heights || []).map(({ heightIn, attempts, poleIdx }) => ({
         heightIn,
         attempts,
         poleIdx,
       })),
       notes,
+      steps: steps ? Number(steps) : undefined,
+      approachIn,
+      takeoffIn: Number(takeoffIn) || 0,
+      standardsIn: Number(standardsIn) || 0,
       poles,
     };
+
+    // Calculate former PR (from all previous meets)
+    const allSessions = usePVStore.getState().sessions;
+    let formerPR = 0;
+    for (const s of allSessions) {
+      if (s.type === 'meet' && Array.isArray(s.attempts)) {
+        for (const a of s.attempts) {
+          if (a.result === 'clear') {
+            formerPR = Math.max(formerPR, Number(a.heightIn) || 0);
+          }
+        }
+      }
+    }
+
+    // Highest cleared in this meet
+    let highestMeet = 0;
+    for (const h of sess.attempts || []) {
+      if (Array.isArray(h.attempts) && h.attempts.some(a => a.result === 'clear')) {
+        highestMeet = Math.max(highestMeet, Number(h.heightIn) || 0);
+      }
+    }
+
+    let alertMsg = `Highest cleared this meet: ${fmtBar(highestMeet, units)}\nFormer PR: ${fmtBar(formerPR, units)}\n`;
+    if (highestMeet > formerPR) {
+      alertMsg += `🎉 New PR: ${fmtBar(highestMeet, units)}!`;
+    } else {
+      alertMsg += `PR unchanged.`;
+    }
+
     add(sess);
-    Alert.alert('Meet Saved!', 'Your meet session has been logged.');
+    Alert.alert('Meet Saved!', alertMsg);
     navigation.goBack();
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 16, paddingBottom: 48 }}>
-        <Section title="New Meet">
-          <Field label="Meet name">
-            <TextInput value={meetName} onChangeText={setMeetName} placeholder="e.g., Conference Finals" style={styles.input} />
-          </Field>
-          <Field label="Goals">
-            <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., open @ 11'6, PR attempt 12'6" style={styles.input} />
-          </Field>
-          <Section title="Poles">
-            {poles.length === 0 ? (
-              <Text style={styles.muted}>No poles added yet.</Text>
-            ) : (
-              <>
-                {poles.map((pole, idx) => (
-  <View key={idx} style={{ marginBottom: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#eee' }}>
-    {/* Brand & Length on the same line */}
-    <Row style={{ gap: 14 }}>
-      <Text style={styles.pText}>
-        {pole.brand ? `Brand: ${pole.brand}` : ''}
-        {pole.length ? `   Length: ${pole.length}` : ''}
-      </Text>
-    </Row>
-    {/* Flex & Weight on the same line */}
-    <Row style={{ gap: 14 }}>
-      <Text style={styles.pText}>
-        {pole.flex ? `Flex: ${pole.flex}` : ''}
-        {pole.weight ? `   Weight: ${pole.weight}` : ''}
-      </Text>
-    </Row>
-    {/* Setup - unchanged */}
-    <Text style={styles.muted}>
-      Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-    </Text>
-    <Row style={{ justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-      <ButtonSecondary
-        title="Edit"
-        onPress={() => {
-          // ...edit logic...
-        }}
-        style={{ marginBottom: 4 }}
-      />
-      <ButtonSecondary
-        title="Remove"
-        onPress={() => {
-          // ...remove logic...
-        }}
-      />
-    </Row>
-  </View>
-))}
-              </>
-            )}
-            <ButtonPrimary title="Add Pole" onPress={() => {
-              setEditPoleIdx(null);
-              setPoleBrand('');
-              setPoleLength('');
-              setPoleFlex('');
-              setPoleWeight('');
-              setPoleSteps('');
-              setPoleApproachFeet('');
-              setPoleApproachInches('');
-              setPoleTakeoffIn('');
-              setPoleStandardsIn('');
-              setPoleHands('');
-              setPoleModalOpen(true);
-            }} style={{ alignSelf: 'flex-start', marginTop: 4 }} />
-          </Section>
-          {PoleModal}
-          <Section title="Heights & Attempts">
-            <Text style={[styles.muted, { marginBottom: 8 }]}>Add multiple heights for this meet. Each height has 3 attempts and must be assigned a pole.</Text>
-            {HeightAddUI}
-           {heights.length ? (
-  heights.map((h, heightIdx) => {
-    const pole = h.poleIdx !== undefined && poles[h.poleIdx] ? poles[h.poleIdx] : null;
-    return (
-      <View key={h.id} style={styles.cardRow}>
-        <Text style={styles.fieldLabel}>Height</Text>
-        <Text style={styles.pText}>{fmtBar(h.heightIn, units)}</Text>
-
-        {/* POLE INFO */}
-        {pole ? (
-          <View style={{ marginBottom: 6 }}>
-            <Text style={styles.fieldLabel}>Pole Used</Text>
-            <Row style={{ gap: 14 }}>
+    <Screen>
+      <Section title="New Meet">
+        <Field label="Meet name">
+          <TextInput value={meetName} onChangeText={setMeetName} placeholder="e.g., Conference Finals" style={styles.input} />
+        </Field>
+        <Field label="Goals">
+          <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., open @ 11'6, PR attempt 12'6" style={styles.input} />
+        </Field>
+        {/* Poles Section ABOVE Heights & Attempts, renamed to "Poles" */}
+        <Section title="Poles">
+  {poles.length === 0 ? (
+    <Text style={styles.muted}>No poles added yet.</Text>
+  ) : (
+    <>
+      {poles.map((pole, idx) => (
+        <View key={idx} style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flexDirection: 'column' }}>
+            {pole.length ? (
               <Text style={styles.pText}>
-                {pole.brand ? `Brand: ${pole.brand}` : ''}
-                {pole.length ? `   Length: ${pole.length}` : ''}
+                Length: {pole.length}
               </Text>
-            </Row>
-            <Row style={{ gap: 14 }}>
+            ) : null}
+            {pole.weight ? (
               <Text style={styles.pText}>
-                {pole.flex ? `Flex: ${pole.flex}` : ''}
-                {pole.weight ? `   Weight: ${pole.weight}` : ''}
+                Weight: {pole.weight}
               </Text>
-            </Row>
-            <Text style={styles.muted}>
-              Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet) * 12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-            </Text>
+            ) : null}
+            {pole.flex ? (
+              <Text style={styles.pText}>
+                Flex: {pole.flex}
+              </Text>
+            ) : null}
           </View>
-        ) : (
-          <Text style={styles.muted}>No pole assigned.</Text>
-        )}
-        {/* ATTEMPTS UI */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-          {h.attempts.map((attempt, attemptIdx) => (
-            <Pressable
-              key={attemptIdx}
-              onPress={() => {
-                setHeights(heightsArr => heightsArr.map((heightItem, i) =>
-                  i === heightIdx
-                    ? {
-                        ...heightItem,
-                        attempts: heightItem.attempts.map((a, j) =>
-                          j === attemptIdx
-                            ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
-                            : a
-                        )
-                      }
-                    : heightItem
-                ));
-              }}
-              style={{
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 8,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: attempt.result === 'clear' ? 'green' : 'red',
-                backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
-                minWidth: 56,
-                marginRight: 8,
-              }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
-                {attempt.result === 'clear' ? 'O' : 'X'}
-              </Text>
-              <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
-            </Pressable>
-          ))}
+          <ButtonSecondary title="Edit" onPress={() => {
+            setEditPoleIdx(idx);
+            setPoleLength(pole.length);
+            setPoleFlex(pole.flex);
+            setPoleWeight(pole.weight);
+            setPoleModalOpen(true);
+          }} />
+          <ButtonSecondary title="Remove" onPress={() => {
+            setPoles(poles.filter((_, i) => i !== idx));
+          }} />
         </View>
-      </View>
-    );
-  })
-) : (
-  <Text style={styles.muted}>No heights added yet.</Text>
-)}
-          </Section>
-          <Field label="Notes">
-            <TextInput value={notes} onChangeText={setNotes} placeholder="meet notes…" style={[styles.input, { height: 90 }]} multiline />
-          </Field>
-          <ButtonPrimary title="Save Meet" onPress={save} />
+      ))}
+    </>
+  )}
+  <ButtonPrimary
+    title="Add Pole"
+    onPress={() => {
+      setEditPoleIdx(null);
+      setPoleLength('');
+      setPoleFlex('');
+      setPoleWeight('');
+      setPoleModalOpen(true);
+    }}
+    style={{ alignSelf: 'flex-start' }}
+  />
+</Section>
+        <Modal visible={poleModalOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.sectionTitle}>{editPoleIdx !== null ? "Edit Pole" : "Add Pole"}</Text>
+              {previousPoles.length > 0 && (
+                <Field label="Copy previous pole">
+                  <SimpleDropdown
+                    label="Select previous pole"
+                    valueLabel=""
+                    onPress={() => setPoleSelectModalOpen(true)}
+                  />
+                  <DropdownModal
+                    visible={poleSelectModalOpen}
+                    title="Select Previous Pole"
+                    options={previousPoles.map((pole, idx) => ({
+                      label: `Pole ${idx + 1}: ${pole.length || ''} ${pole.flex || ''} ${pole.weight || ''}`,
+                      value: idx
+                    }))}
+                    onSelect={(opt) => {
+                      const p = previousPoles[opt.value];
+                      setPoleLength(p.length || '');
+                      setPoleFlex(p.flex || '');
+                      setPoleWeight(p.weight || '');
+                      setPoleSelectModalOpen(false);
+                    }}
+                    onClose={() => setPoleSelectModalOpen(false)}
+                  />
+                </Field>
+              )}
+              <Field label="Length (ft/in or cm)">
+                <TextInput value={poleLength} onChangeText={setPoleLength} placeholder='e.g., 13"' style={styles.input} />
+              </Field>
+              <Field label="Flex Number">
+                <TextInput value={poleFlex} onChangeText={setPoleFlex} placeholder="e.g., 16.8" style={styles.input} />
+              </Field>
+              <Field label="Weight Rating (lbs or kg)">
+                <TextInput value={poleWeight} onChangeText={setPoleWeight} placeholder="e.g., 155 lbs" style={styles.input} />
+              </Field>
+              <Row style={{ justifyContent: 'flex-end', gap: 8 }}>
+                <ButtonSecondary title="Cancel" onPress={() => { setPoleModalOpen(false); setEditPoleIdx(null); }} />
+                <ButtonPrimary title="Save" onPress={() => {
+                  if (!poleLength && !poleFlex && !poleWeight) return;
+                  const poleObj = { length: poleLength, flex: poleFlex, weight: poleWeight };
+                  if (editPoleIdx !== null) {
+                    setPoles(poles.map((p, i) => i === editPoleIdx ? poleObj : p));
+                  } else {
+                    setPoles([...poles, poleObj]);
+                  }
+                  setPoleModalOpen(false);
+                  setEditPoleIdx(null);
+                }} />
+              </Row>
+            </View>
+          </View>
+        </Modal>
+        {/* Heights & Attempts Section as Section (bold, same style as Poles) */}
+        <Section title="Heights & Attempts">
+          <Text style={[styles.muted, { marginBottom: 8 }]}>Add multiple heights for this meet. Each height has 3 attempts and must be assigned a pole.</Text>
+          {HeightAddUI}
+          {heights.length ? (
+            heights.map((h) => (
+              <View key={h.id} style={styles.cardRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fieldLabel}>Height</Text>
+                  <Text style={styles.pText}>{fmtBar(h.heightIn, units)}</Text>
+                  {h.poleIdx !== undefined && poles[h.poleIdx] ? (
+                    <Text style={styles.muted}>
+                      Pole Used: Length {poles[h.poleIdx].length}, Flex {poles[h.poleIdx].flex}, Weight {poles[h.poleIdx].weight}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={{ width: 16 }} />
+                <View style={{ flex: 2 }}>
+                  <Text style={styles.fieldLabel}>Attempts</Text>
+                  <Row style={{ flexWrap: 'wrap' }}>
+                    {h.attempts.map((a, i) => {
+  const clearIdx = h.attempts.findIndex(at => at.result === 'clear');
+  if (clearIdx !== -1 && i > clearIdx) return null;
+  return (
+    <View key={a.idx} style={{ marginRight: 12 }}>
+      <Text>Attempt {a.idx}</Text>
+      <Row>
+        <Pressable
+  onPress={() => {
+    // Only allow O/X to be set if no clear has happened yet, or this is the first clear
+    if (clearIdx === -1) updateAttemptResult(h.id, a.idx, 'clear');
+  }}
+  style={[
+    styles.choice,
+    a.result === 'clear' && styles.choiceOn,
+  ]}
+>
+  <Text style={[styles.choiceText, a.result === 'clear' && styles.choiceTextOn]}>O</Text>
+</Pressable>
+<Pressable
+  onPress={() => {
+    // Only allow X to be set if no clear has happened yet, or this is before the first clear
+    if (clearIdx === -1 || i < clearIdx) updateAttemptResult(h.id, a.idx, 'miss');
+  }}
+  style={[styles.choice, a.result === 'miss' && styles.choiceOnMiss]}
+>
+  <Text style={[styles.choiceText, a.result === 'miss' && styles.choiceTextOn]}>
+    {clearIdx === -1 || i < clearIdx ? 'X' : ''}
+  </Text>
+</Pressable>
+        {/* Attempt type dropdown */}
+        <SimpleDropdown
+          label="Attempt Type"
+          valueLabel={a.type === 'bungee' ? 'Bungee' : 'Bar'}
+          onPress={() => setAttemptTypeDropdownOpen({ ...attemptTypeDropdownOpen, [`${h.id}-${a.idx}`]: true })}
+        />
+        <DropdownModal
+          visible={attemptTypeDropdownOpen[`${h.id}-${a.idx}`]}
+          title="Attempt Type"
+          options={[
+            { label: 'Bar', value: 'bar' },
+            { label: 'Bungee', value: 'bungee' }
+          ]}
+          onSelect={(opt) => {
+            setHeights(arr => arr.map(height =>
+              height.id !== h.id ? height :
+              {
+                ...height,
+                attempts: height.attempts.map(at =>
+                  at.idx === a.idx ? { ...at, type: opt.value } : at
+                )
+              }
+            ));
+            setAttemptTypeDropdownOpen(open => ({ ...open, [`${h.id}-${a.idx}`]: false }));
+          }}
+          onClose={() => setAttemptTypeDropdownOpen(open => ({ ...open, [`${h.id}-${a.idx}`]: false }))}
+        />
+      </Row>
+    </View>
+  );
+})}
+                    <Pressable onPress={() => removeHeight(h.id)} style={[styles.choice, { backgroundColor: '#eee' }]}><Text style={[styles.choiceText, { color: '#333' }]}>Remove</Text></Pressable>
+                  </Row>
+                </View>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.muted}>No heights added yet.</Text>
+          )}
         </Section>
-      </ScrollView>
-    </SafeAreaView>
+        {SetupBlock}
+        <Field label="Notes"><TextInput value={notes} onChangeText={setNotes} placeholder="meet notes…" style={[styles.input, { height: 90 }]} multiline /></Field>
+        <Row style={{ gap: 8, marginTop: 8 }}>
+          <TextInput value={email} onChangeText={setEmail} placeholder="coach@example.com" autoCapitalize="none" keyboardType="email-address" style={[styles.input, { flex: 1 }]} />
+          <ButtonSecondary title="Email" onPress={handleEmail} />
+        </Row>
+        <View style={{ height: 10 }} />
+        <ButtonPrimary title="Save Meet" onPress={save} />
+      </Section>
+    </Screen>
   );
 }
-
-
 // PLAN: read-only (no editing, uses code-defined plan)
 function PlanScreen() {
   const plan = usePVStore((s) => s.weeklyPlan);
