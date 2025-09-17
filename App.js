@@ -901,6 +901,8 @@ function PracticeFormScreen({ navigation }) {
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [videoModalClips, setVideoModalClips] = useState([]);
   const [videoModalHeading, setVideoModalHeading] = useState('');
+  const [videoModalHeightIn, setVideoModalHeightIn] = useState(null);
+  const [videoModalAttemptNumber, setVideoModalAttemptNumber] = useState(null);
 
   // Camera permissions and recording state
   const [camPerm, requestCamPerm] = useCameraPermissions();
@@ -911,9 +913,11 @@ function PracticeFormScreen({ navigation }) {
   const cameraRef = useRef(null);
 
   // Video modal functions
-  function openVideoModal(clips, heading) {
+  function openVideoModal(clips, heading, heightIn, attemptNumber) {
     setVideoModalClips(clips);
     setVideoModalHeading(heading);
+    setVideoModalHeightIn(heightIn);
+    setVideoModalAttemptNumber(attemptNumber);
     setVideoModalOpen(true);
   }
   
@@ -921,6 +925,8 @@ function PracticeFormScreen({ navigation }) {
     setVideoModalOpen(false);
     setVideoModalClips([]);
     setVideoModalHeading('');
+    setVideoModalHeightIn(null);
+    setVideoModalAttemptNumber(null);
   }
 
   // Handle recording video for an attempt
@@ -1561,7 +1567,7 @@ function PracticeFormScreen({ navigation }) {
                                 title={`View Video (${clips.length})`}
                                 style={{ marginTop: 2, paddingHorizontal: 8 }}
                                 onPress={() =>
-                                  openVideoModal(clips, `Attempt Video (${date})`)
+                                  openVideoModal(clips, `Attempt Video (${date})`, h.heightIn, attemptIdx + 1)
                                 }
                               />
                             )}
@@ -1601,7 +1607,7 @@ function PracticeFormScreen({ navigation }) {
                             text: 'Delete', 
                             style: 'destructive', 
                             onPress: () => {
-                              deleteAttemptVideo(date, clip.heightIn, clip.attemptNumber, clip.id);
+                              deleteAttemptVideo(date, videoModalHeightIn, videoModalAttemptNumber, clip.id);
                               closeVideoModal();
                             }
                           },
@@ -1785,6 +1791,8 @@ function MeetFormScreen({ navigation }) {
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [videoModalClips, setVideoModalClips] = useState([]);
   const [videoModalHeading, setVideoModalHeading] = useState('');
+  const [videoModalHeightIn, setVideoModalHeightIn] = useState(null);
+  const [videoModalAttemptNumber, setVideoModalAttemptNumber] = useState(null);
 
   // Camera permissions and recording state
   const [camPerm, requestCamPerm] = useCameraPermissions();
@@ -1795,9 +1803,11 @@ function MeetFormScreen({ navigation }) {
   const cameraRef = useRef(null);
 
   // Video modal functions
-  function openVideoModal(clips, heading) {
+  function openVideoModal(clips, heading, heightIn, attemptNumber) {
     setVideoModalClips(clips);
     setVideoModalHeading(heading);
+    setVideoModalHeightIn(heightIn);
+    setVideoModalAttemptNumber(attemptNumber);
     setVideoModalOpen(true);
   }
   
@@ -1805,6 +1815,8 @@ function MeetFormScreen({ navigation }) {
     setVideoModalOpen(false);
     setVideoModalClips([]);
     setVideoModalHeading('');
+    setVideoModalHeightIn(null);
+    setVideoModalAttemptNumber(null);
   }
 
   // Handle recording video for an attempt
@@ -2429,7 +2441,7 @@ function MeetFormScreen({ navigation }) {
                     title={`View Video (${clips.length})`}
                     style={{ marginTop: 2, paddingHorizontal: 8 }}
                     onPress={() =>
-                      openVideoModal(clips, `Attempt Video (${date})`)
+                      openVideoModal(clips, `Attempt Video (${date})`, h.heightIn, attemptIdx + 1)
                     }
                   />
                 )}
@@ -2469,7 +2481,7 @@ function MeetFormScreen({ navigation }) {
                             text: 'Delete', 
                             style: 'destructive', 
                             onPress: () => {
-                              deleteAttemptVideo(date, clip.heightIn, clip.attemptNumber, clip.id);
+                              deleteAttemptVideo(date, videoModalHeightIn, videoModalAttemptNumber, clip.id);
                               closeVideoModal();
                             }
                           },
