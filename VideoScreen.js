@@ -1,4 +1,3 @@
-// VideoScreen.js
 import {
   CameraView,
   useCameraPermissions,
@@ -6,6 +5,7 @@ import {
 } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { useNavigation } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -22,17 +22,37 @@ import {
 } from 'react-native';
 import { usePVStore } from './store';
 
+
 export default function VideoScreen() {
-  // Local video list
-  // item shape: { uri, addedAt, source: 'recorded'|'uploaded', title: string }
-  const [videos, setVideos] = useState([]);
+  // ---- Attempt-level videos from global store ----
+  const attemptVideos = usePVStore((s) => s.attemptVideos);
+
+  // Flatten all attempt videos into one array for display, including key info for each video
+  const allAttemptVideos = useMemo(() =>
+    Object.entries(attemptVideos)
+      .flatMap(([key, arr]) => {
+        // Parse key: `${sessionId}::h=${heightInches}::a=${attemptNumber}`
+        const [sessionId, h, a] = key.split("::");
+        const heightInches = Number(h.split('=')[1]);
+        const attemptNumber = Number(a.split('=')[1]);
+        return (arr || []).map(video => ({
+          ...video,
+          sessionId,
+          heightInches,
+          attemptNumber,
+        }));
+      })
+      .sort((a, b) => b.addedAt - a.addedAt)
+  , [attemptVideos]);
+
+  // Camera/record/upload state
   const [showCamera, setShowCamera] = useState(false);
   const [recordedUri, setRecordedUri] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
 
   // Rename modal state
   const [renameVisible, setRenameVisible] = useState(false);
-  const [renameUri, setRenameUri] = useState(null);
+  const [renameVideo, setRenameVideo] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
   // Camera + mic permissions
@@ -40,18 +60,13 @@ export default function VideoScreen() {
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
 
-  // Sessions (optional)
-  const sessions = usePVStore((s) => s.sessions);
-  const updateSession = usePVStore((s) => s.updateSession);
-  const latestSession = useMemo(
-    () => (sessions && sessions.length ? sessions[0] : null),
-    [sessions]
-  );
+  // Store actions for attempt-level videos
+  const addAttemptVideo = usePVStore((s) => s.addAttemptVideo);
+  const renameAttemptVideo = usePVStore((s) => s.renameAttemptVideo);
+  const deleteAttemptVideo = usePVStore((s) => s.deleteAttemptVideo);
 
-  // Player for preview-after-record
-  const previewPlayer = useVideoPlayer(null, (player) => {
-    player.loop = false;
-  });
+  // Navigation (for "View in Log")
+  const navigation = useNavigation();
 
   // Ask for permissions on camera modal open
   useEffect(() => {
@@ -66,21 +81,25 @@ export default function VideoScreen() {
     })();
   }, [showCamera]);
 
+  // Player for preview-after-record
+  const previewPlayer = useVideoPlayer(null, (player) => {
+    player.loop = false;
+  });
+
   // Load freshly recorded clip into preview player
-      useEffect(() => {
-       let cancelled = false;
-       (async () => {
-       if (!recordedUri) return;
-       try {
-       await previewPlayer.replaceAsync(recordedUri);
-       if (cancelled) return;
-       // (optional) previewPlayer.play();
-      }catch {
-       /* no-op */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!recordedUri) return;
+      try {
+        await previewPlayer.replaceAsync(recordedUri);
+        if (cancelled) return;
+      } catch {
+        /* no-op */
       }
     })();
-      return () => { cancelled = true; };
-     }, [recordedUri, previewPlayer]);
+    return () => { cancelled = true; };
+  }, [recordedUri, previewPlayer]);
 
   // Open camera modal (ensure permissions first)
   async function onPressRecordVideo() {
@@ -125,77 +144,54 @@ export default function VideoScreen() {
     }
   }
 
-  // Save recorded video
+  // Save recorded video to the global attemptVideos store (not local state)
   function onSaveRecorded() {
     if (!recordedUri) return;
-    const title = `Recorded ${new Date().toLocaleString()}`;
-    setVideos((prev) => [
-      { uri: recordedUri, addedAt: Date.now(), source: 'recorded', title },
-      ...prev,
-    ]);
+    // Use a dummy sessionId, height, attempt for general videos
+    addAttemptVideo("general", 0, 0, recordedUri, `Recorded ${new Date().toLocaleString()}`);
     setShowCamera(false);
     setRecordedUri(null);
   }
 
   // Upload existing from library
   async function onPickFromLibrary() {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-        allowsEditing: false,
-        quality: 1,
-      });
-      if (!result.canceled && result.assets?.length) {
-        const uri = result.assets[0].uri;
-        const title = `Uploaded ${new Date().toLocaleString()}`;
-        setVideos((prev) => [
-          { uri, addedAt: Date.now(), source: 'uploaded', title },
-          ...prev,
-        ]);
+  try {
+    // Work with both new and old expo-image-picker APIs
+    const hasNewEnum = ImagePicker?.MediaType && typeof ImagePicker.MediaType.VIDEO !== 'undefined';
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      // Use ARRAY form (new API), fall back to legacy enum if needed
+      mediaTypes: hasNewEnum
+        ? [ImagePicker.MediaType.VIDEO]                       // new API (SDK 17+)
+        : ImagePicker?.MediaTypeOptions?.Videos ?? undefined, // legacy fallback
+      allowsEditing: false,
+      quality: 1,
+    });
+
+    if (!result?.canceled) {
+      // Support both result shapes
+      const uri =
+        result.assets?.[0]?.uri ??
+        result.uri ??
+        null;
+
+      if (uri) {
+        addAttemptVideo("general", 0, 0, uri, `Uploaded ${new Date().toLocaleString()}`);
       }
-    } catch (e) {
-      Alert.alert('Picker Error', e?.message || String(e));
     }
+  } catch (e) {
+    Alert.alert('Picker Error', e?.message || String(e));
   }
-
-  // Attach to most recent session (optional)
-  function onAttachToLatestSession(uri) {
-    if (!latestSession || !updateSession) {
-      Alert.alert('No Session', 'There is no session to attach this video to.');
-      return;
-    }
-    const existing = Array.isArray(latestSession.videos) ? latestSession.videos : [];
-    updateSession(latestSession.id, { videos: [{ uri, addedAt: Date.now() }, ...existing] });
-    Alert.alert('Attached', 'Video attached to the latest session.');
-  }
-
-  // Delete from local list (and from latest session if present)
-  function onDeleteVideo(uri) {
-    Alert.alert('Delete video', 'Are you sure you want to delete this video?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          setVideos((prev) => prev.filter((v) => v.uri !== uri));
-          if (latestSession && updateSession) {
-            const existing = Array.isArray(latestSession.videos) ? latestSession.videos : [];
-            updateSession(latestSession.id, { videos: existing.filter((v) => v.uri !== uri) });
-          }
-        },
-      },
-    ]);
-  }
+}
 
   // Share a video URI
-  async function onShareVideo(uri, title) {
+  async function onShareVideo(video) {
     try {
-      // Some platforms prefer message; iOS honors url/title more
       await Share.share(
         Platform.select({
-          ios: { url: uri, message: undefined, title },
-          android: { message: `${title}\n${uri}` },
-          default: { message: `${title}\n${uri}` },
+          ios: { url: video.uri, message: undefined, title: video.title },
+          android: { message: `${video.title}\n${video.uri}` },
+          default: { message: `${video.title}\n${video.uri}` },
         })
       );
     } catch (e) {
@@ -203,40 +199,52 @@ export default function VideoScreen() {
     }
   }
 
-  // Begin rename
-  function beginRename(uri, currentTitle) {
-    setRenameUri(uri);
-    setRenameValue(currentTitle || '');
+  // Begin rename (uses keys)
+  function beginRename(video) {
+    setRenameVideo(video);
+    setRenameValue(video.title || '');
     setRenameVisible(true);
   }
   function cancelRename() {
     setRenameVisible(false);
-    setRenameUri(null);
+    setRenameVideo(null);
     setRenameValue('');
   }
   function confirmRename() {
-    if (!renameUri) return;
-    const title = renameValue.trim() || 'Untitled video';
-    setVideos((prev) =>
-      prev.map((v) => (v.uri === renameUri ? { ...v, title } : v))
+    if (!renameVideo) return;
+    renameAttemptVideo(
+      renameVideo.sessionId,
+      renameVideo.heightInches,
+      renameVideo.attemptNumber,
+      renameVideo.id,
+      renameValue.trim() || 'Untitled video'
     );
     setRenameVisible(false);
-    setRenameUri(null);
+    setRenameVideo(null);
     setRenameValue('');
+  }
+
+  // "View in Log" handler
+  function onGoToSession(video) {
+    // Only run for non-general videos
+    if (video.sessionId !== "general") {
+      navigation.navigate('SessionDetails', {
+        id: video.sessionId,
+        heightInches: video.heightInches,
+        attemptNumber: video.attemptNumber,
+      });
+    }
   }
 
   // Friendly label row
   function renderVideo({ item }) {
     return (
       <VideoRow
-        uri={item.uri}
-        title={item.title}
-        addedAt={item.addedAt}
-        source={item.source}
-        onAttach={() => onAttachToLatestSession(item.uri)}
-        onDelete={() => onDeleteVideo(item.uri)}
-        onShare={() => onShareVideo(item.uri, item.title)}
-        onRename={() => beginRename(item.uri, item.title)}
+        video={item}
+        onGoToSession={onGoToSession}
+        onDelete={() => onDeleteVideo(item)}
+        onShare={() => onShareVideo(item)}
+        onRename={() => beginRename(item)}
       />
     );
   }
@@ -279,7 +287,7 @@ export default function VideoScreen() {
                 style={{ flex: 1 }}
                 player={previewPlayer}
                 nativeControls
-                                allowsPictureInPicture
+                allowsPictureInPicture
                 contentFit="contain"
               />
               <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginVertical: 24 }}>
@@ -294,7 +302,7 @@ export default function VideoScreen() {
               <CameraView
                 ref={cameraRef}
                 style={{ flex: 1 }}
-                facing="back"      // "front" | "back"
+                facing="back"
                 mode="video"
                 enableAudio
               />
@@ -344,8 +352,8 @@ export default function VideoScreen() {
       </Modal>
 
       <FlatList
-        data={videos}
-        keyExtractor={(item) => `${item.uri}-${item.addedAt}`}
+        data={allAttemptVideos}
+        keyExtractor={(item) => item.id}
         renderItem={renderVideo}
         contentContainerStyle={{ paddingBottom: 48 }}
         ListEmptyComponent={<Text style={styles.infoText}>No videos yet. Record or upload one.</Text>}
@@ -355,8 +363,8 @@ export default function VideoScreen() {
 }
 
 /** Row with friendly title + player + actions + overflow menu (⋮) */
-function VideoRow({ uri, title, addedAt, source, onAttach, onDelete, onShare, onRename }) {
-  const rowPlayer = useVideoPlayer(uri, (player) => {
+function VideoRow({ video, onGoToSession, onDelete, onShare, onRename }) {
+  const rowPlayer = useVideoPlayer(video.uri, (player) => {
     player.loop = false;
   });
   const [menuOpen, setMenuOpen] = useState(false);
@@ -364,7 +372,7 @@ function VideoRow({ uri, title, addedAt, source, onAttach, onDelete, onShare, on
   return (
     <View style={styles.videoBlock}>
       <View style={styles.rowHeader}>
-        <Text style={styles.metaLabel}>{title}</Text>
+        <Text style={styles.metaLabel}>{video.title}</Text>
         <TouchableOpacity onPress={() => setMenuOpen((v) => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={styles.menuDots}>⋮</Text>
         </TouchableOpacity>
@@ -394,9 +402,11 @@ function VideoRow({ uri, title, addedAt, source, onAttach, onDelete, onShare, on
       />
 
       <View style={{ flexDirection: 'row', marginTop: 8 }}>
-        <TouchableOpacity style={styles.attachBtn} onPress={onAttach}>
-          <Text>Attach to Session</Text>
-        </TouchableOpacity>
+        {video.sessionId !== "general" && (
+          <TouchableOpacity style={styles.attachBtn} onPress={() => onGoToSession(video)}>
+            <Text>View in Log</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -405,7 +415,7 @@ function VideoRow({ uri, title, addedAt, source, onAttach, onDelete, onShare, on
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#fff' },
   buttonRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 48, marginBottom: 16 },
-  heading: { fontWeight: 'bold', fontSize: 22, marginBottom: 8 },
+  heading: { fontWeight: 'bold', fontSize: 22, marginBottom: 8, marginTop: 48 },
 
   videoBlock: { marginVertical: 12, padding: 12, backgroundColor: '#f9f9f9', borderRadius: 12 },
   rowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },

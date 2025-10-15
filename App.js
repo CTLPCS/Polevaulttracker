@@ -46,7 +46,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Image,
@@ -57,7 +57,8 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
+  Button
 } from 'react-native';
 import 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -66,6 +67,13 @@ import SplashScreen from './SplashScreen';
 import VideoScreen from './VideoScreen';
 import { DropdownModal, SimpleDropdown } from './components';
 import { usePVStore } from './store';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { KeyboardAvoidingView, Platform } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { FileSystem } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+
 
 // -------------------- Utilities --------------------
 // Max feet for approach selector
@@ -220,6 +228,48 @@ function UnitAwareHeightInput({ units, valueInches, onChangeInches, placeholder 
 }
 
 // -------------------- Helpers --------------------
+function findPRSessionAndHeight(sessions) {
+  // Find the highest cleared height across all meet sessions
+  let best = 0;
+  let prSession = null;
+  let prHeightBlock = null;
+  for (const s of sessions || []) {
+    if (s.type === 'meet' && Array.isArray(s.attempts)) {
+      for (const heightBlock of s.attempts) {
+        const isClear = Array.isArray(heightBlock.attempts) && heightBlock.attempts.some(a => a.result === 'clear');
+        if (isClear && Number(heightBlock.heightIn) >= best) {
+          best = Number(heightBlock.heightIn);
+          prSession = s;
+          prHeightBlock = heightBlock;
+        }
+      }
+    }
+  }
+  return best && prSession && prHeightBlock ? { prSession, prHeightBlock } : null;
+}
+function parseTextPlan(txt) {
+  const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  const plan = {};
+  const lines = txt.split('\n').map(l=>l.trim());
+  let currDay = null, goals = '', routine = [];
+  for (let i=0; i<lines.length; ++i) {
+    const line = lines[i];
+    if (days.includes(line)) {
+      if (currDay) plan[currDay] = { goals, routine: [...routine] };
+      currDay = line;
+      goals = ''; routine = [];
+    } else if (line.startsWith('Goals:')) {
+      goals = line.slice(6).trim();
+    } else if (line === 'Routine:') {
+      // skip, next lines will be routine items
+    } else if (line.startsWith('- ')) {
+      routine.push(line.slice(2));
+    }
+  }
+  if (currDay) plan[currDay] = { goals, routine };
+  return plan;
+}
+
 function selectLatestPractice(sessions) {
   let latest = null;
   for (const s of sessions || []) {
@@ -341,12 +391,22 @@ function sessionSummaryText(session, settings, athlete) {
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+
 function HomeScreen({ navigation }) {
   const sessions = usePVStore((s) => s.sessions);
   const { units, athlete } = usePVStore((s) => s.settings);
   const name = fullName(athlete);
-  const prInches = useMemo(() => calcPR(sessions), [sessions]);
-  const latestPractice = useMemo(() => selectLatestPractice(sessions), [sessions]);
+
+  // Find PR session & height block
+  const prResult = React.useMemo(() => findPRSessionAndHeight(sessions), [sessions]);
+  const prInches = prResult ? prResult.prHeightBlock.heightIn : 0;
+  const prPole =
+    prResult && Array.isArray(prResult.prSession.poles) && typeof prResult.prHeightBlock.poleIdx === 'number'
+      ? prResult.prSession.poles[prResult.prHeightBlock.poleIdx]
+      : null;
+
+  // Fallback to latest practice if no PR yet
+  const latestPractice = React.useMemo(() => selectLatestPractice(sessions), [sessions]);
 
   return (
     <Screen>
@@ -364,17 +424,52 @@ function HomeScreen({ navigation }) {
         </Field>
       </Section>
 
-      <Section title="Current Setup">
-        <Row style={{ flexWrap: 'wrap', gap: 10 }}>
-          <Pill text={`Steps ${latestPractice?.steps ?? '—'}`} />
-          <Pill text={`Approach ${fmtFeetIn(latestPractice?.approachIn)}`} />
-          <Pill text={`Standards ${fmtStandards(latestPractice?.standardsIn, units)}`} />
-          <Pill text={`Takeoff ${fmtTakeoff(latestPractice?.takeoffIn, units)}`} />
-        </Row>
-        {latestPractice ? (
-          <Text style={[styles.muted, { marginTop: 8 }]}>From practice on {new Date(latestPractice.date).toLocaleDateString()}</Text>
+      <Section title="PR Jump Setup">
+        {prResult ? (
+          <>
+            <Row style={{ flexWrap: 'wrap', gap: 10 }}>
+              <Pill text={`Steps ${prPole?.steps ?? prResult.prSession.steps ?? '—'}`} />
+              <Pill text={`Approach ${
+                prPole
+                  ? fmtFeetIn(Number(prPole.approachFeet || 0) * 12 + Number(prPole.approachInches || 0))
+                  : fmtFeetIn(prResult.prSession.approachIn)
+              }`} />
+              <Pill text={`Standards ${
+                prPole
+                  ? fmtStandards(prPole.standardsIn, units)
+                  : fmtStandards(prResult.prSession.standardsIn, units)
+              }`} />
+              <Pill text={`Takeoff ${
+                prPole
+                  ? fmtTakeoff(prPole.takeoffIn, units)
+                  : fmtTakeoff(prResult.prSession.takeoffIn, units)
+              }`} />
+            </Row>
+            {prPole ? (
+              <Row style={{ flexWrap: 'wrap', gap: 10, marginTop: 6 }}>
+                <Pill text={`Pole: ${[prPole.brand, prPole.length, prPole.flex, prPole.weight].filter(Boolean).join(' ')}`} />
+              </Row>
+            ) : (
+              <Text style={[styles.muted, { marginTop: 8 }]}>No pole assigned for PR.</Text>
+            )}
+            <Text style={[styles.muted, { marginTop: 8 }]}>
+              From PR jump on {new Date(prResult.prSession.date).toLocaleDateString()}
+            </Text>
+          </>
         ) : (
-          <Text style={[styles.muted, { marginTop: 8 }]}>No practices logged yet.</Text>
+          <>
+            <Row style={{ flexWrap: 'wrap', gap: 10 }}>
+              <Pill text={`Steps ${latestPractice?.steps ?? '—'}`} />
+              <Pill text={`Approach ${fmtFeetIn(latestPractice?.approachIn)}`} />
+              <Pill text={`Standards ${fmtStandards(latestPractice?.standardsIn, units)}`} />
+              <Pill text={`Takeoff ${fmtTakeoff(latestPractice?.takeoffIn, units)}`} />
+            </Row>
+            {latestPractice ? (
+              <Text style={[styles.muted, { marginTop: 8 }]}>From practice on {new Date(latestPractice.date).toLocaleDateString()}</Text>
+            ) : (
+              <Text style={[styles.muted, { marginTop: 8 }]}>No practices logged yet.</Text>
+            )}
+          </>
         )}
       </Section>
 
@@ -588,12 +683,55 @@ function LogScreen({ navigation }) {
   );
 }
 
+
 // --- PATCHED: Practice session details show attempted heights ---
 function SessionDetailsScreen({ route, navigation }) {
   const { id } = route.params;
   const session = usePVStore((s) => s.sessions.find((x) => x.id === id));
+  const attemptVideos = usePVStore((s) => s.attemptVideos);
+  const units = usePVStore((s) => s.settings.units);
+  const athlete = usePVStore((s) => s.settings.athlete);
   const settings = usePVStore((s) => s.settings);
-  const { units, athlete } = settings;
+  
+  
+  function SessionVideoRow({ video, units }) {
+  const rowPlayer = useVideoPlayer(video.uri, (player) => { player.loop = false; });
+  return (
+    <View key={video.id} style={{ marginBottom: 16 }}>
+      <Text style={{ fontWeight: '600', fontSize: 15 }}>
+        {video.title || `Video`}
+      </Text>
+      <Text style={{ color: '#777', fontSize: 13 }}>
+        Height: {fmtBar(video.heightInches, units)}, Attempt: {video.attemptNumber}
+      </Text>
+      <VideoView
+        style={{ height: 220, width: '100%', backgroundColor: '#000' }}
+        player={rowPlayer}
+        nativeControls
+        allowsPictureInPicture
+        contentFit="contain"
+      />
+    </View>
+  );
+}
+  
+
+  // PATCH: Get all videos for this session
+  const sessionVideos = useMemo(() =>
+    Object.entries(attemptVideos)
+      .flatMap(([key, arr]) => {
+        const [sessionId, h, a] = key.split("::");
+        if (sessionId !== session?.id) return [];
+        const heightInches = Number(h.split('=')[1]);
+        const attemptNumber = Number(a.split('=')[1]);
+        return (arr || []).map(video => ({
+          ...video,
+          heightInches,
+          attemptNumber,
+        }));
+      })
+      .sort((a, b) => b.addedAt - a.addedAt)
+  , [attemptVideos, session?.id]);
 
   if (!session) return (<Screen><Text>Session not found.</Text></Screen>);
 
@@ -778,16 +916,61 @@ function SessionDetailsScreen({ route, navigation }) {
       <Row style={{ justifyContent: 'flex-end', marginBottom: 30 }}>
         <ButtonPrimary title="Share" onPress={handleShare} />
       </Row>
+      {/* PATCH: Session Videos section now at the bottom */}
+      {sessionVideos.length > 0 && (
+  <Section title="Session Videos">
+    {sessionVideos.map((video, idx) => {
+      // Create a video player instance for each video URI
+      const rowPlayer = useVideoPlayer(video.uri, (player) => { player.loop = false; });
+      return (
+        <View key={video.id} style={{ marginBottom: 16 }}>
+          <Text style={{ fontWeight: '600', fontSize: 15 }}>
+            {video.title || `Video ${idx + 1}`}
+          </Text>
+          <Text style={{ color: '#777', fontSize: 13 }}>
+            Height: {fmtBar(video.heightInches, units)}, Attempt: {video.attemptNumber}
+          </Text>
+          <VideoView
+            style={{ height: 220, width: '100%', backgroundColor: '#000' }}
+            player={rowPlayer}
+            nativeControls
+            allowsPictureInPicture
+            contentFit="contain"
+          />
+        </View>
+      );
+    })}
+  </Section>
+)}
     </Screen>
   );
 }
 
+
 function PracticeFormScreen({ navigation }) {
+  const [sessionId] = useState(() => shortId()); // PATCH: use a stable sessionId
   const { units } = usePVStore((s) => s.settings);
   const add = usePVStore((s) => s.addSession);
   const plan = usePVStore((s) => s.weeklyPlan);
   const allSessions = usePVStore((s) => s.sessions);
-
+  const addAttemptVideo = usePVStore((s) => s.addAttemptVideo);
+  const getAttemptVideos = usePVStore((s) => s.getAttemptVideos);
+  const deleteAttemptVideo = usePVStore((s) => s.deleteAttemptVideo);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [videoModalClips, setVideoModalClips] = useState([]);
+  const [videoModalTitle, setVideoModalTitle] = useState('');
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [videoModalHeading, setVideoModalHeading] = useState(''); 
+  const previewPlayer = useVideoPlayer(null, (player) => { player.loop = false; });
+    useEffect(() => {
+  (async () => {
+    const uri = videoModalClips?.[0]?.uri || recordedUri;
+    if (videoModalOpen && uri) {
+      try { await previewPlayer.replaceAsync(uri); } catch {}
+    }
+  })();
+}, [videoModalOpen, videoModalClips, recordedUri, previewPlayer]);
+  const [updateFlag, setUpdateFlag] = useState(0); 
   const dayNameStr = todayName();
   const dayPlan = plan[dayNameStr] || { goals: '', routine: [] };
 
@@ -800,6 +983,16 @@ function PracticeFormScreen({ navigation }) {
     [dayPlan.routine]
   );
   const [routine, setRoutine] = useState(initialRoutine);
+  const [notes, setNotes] = useState('');
+  // Camera permissions and recording state
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const [showCamera, setShowCamera] = useState(false);
+  const [pendingAttempt, setPendingAttempt] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false); // reset camera ready state each time
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedUri, setRecordedUri] = useState(null);
+  const cameraRef = useRef(null);
 
   // Heights & attempts logic
   const [heights, setHeights] = useState([]);
@@ -832,6 +1025,49 @@ function PracticeFormScreen({ navigation }) {
   const [poleStandardsModalOpen, setPoleStandardsModalOpen] = useState(false);
   const [poleHandsOpen, setPoleHandsOpen] = useState(false);
   const [editPoleIdx, setEditPoleIdx] = useState(null);
+  
+  // PATCH: getAllAttemptVideos to include unsaved videoUri from heights
+  function getAllAttemptVideos(sessionId, heightIn, attemptNumber) {
+  const persistedClipsRaw = getAttemptVideos(sessionId, heightIn, attemptNumber) || [];
+  // Patch all persisted clips with required fields
+  const persistedClips = persistedClipsRaw.map(c => ({
+    ...c,
+    heightIn: c.heightIn ?? heightIn,
+    attemptNumber: c.attemptNumber ?? attemptNumber,
+    id: c.id ?? `${sessionId}_${heightIn}_${attemptNumber}`,
+  }));
+
+  let unsavedClip = null;
+  for (const h of heights) {
+    if (h.heightIn === heightIn) {
+      const attempt = h.attempts?.[attemptNumber - 1];
+      if (attempt && attempt.videoUri) {
+        unsavedClip = {
+          uri: attempt.videoUri,
+          title: "Just Recorded Video",
+          id: attempt.id ?? `${sessionId}_${heightIn}_${attemptNumber}`,
+          heightIn: h.heightIn,
+          attemptNumber: attempt.idx ?? attemptNumber, // fallback to passed-in attemptNumber
+        };
+      }
+    }
+  }
+
+  if (unsavedClip) {
+    // Patch unsavedClip with all required fields
+    const alreadyIncluded = persistedClips.some(c => c.uri === unsavedClip.uri);
+    const clipsArr = alreadyIncluded ? persistedClips : [unsavedClip, ...persistedClips];
+    // Ensure all clips are patched
+    return clipsArr.map(c => ({
+      ...c,
+      heightIn: c.heightIn ?? heightIn,
+      attemptNumber: c.attemptNumber ?? attemptNumber,
+      id: c.id ?? `${sessionId}_${heightIn}_${attemptNumber}`,
+    }));
+  }
+
+  return persistedClips;
+}
 
   // Previous poles from all sessions (deduplicated)
   const previousPoles = useMemo(() => {
@@ -889,8 +1125,122 @@ function PracticeFormScreen({ navigation }) {
     }
     return arr;
   }, []);
+ // Permission sheet logic
+  const needPermSheet =
+  showCamera &&
+  ((!camPerm || camPerm.status !== 'granted') || (!micPerm || micPerm.status !== 'granted'));
 
-  const [notes, setNotes] = useState('');
+// Load freshly recorded clip into preview player (just like VideoScreen.js)
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    if (!recordedUri) return;
+    try {
+      await previewPlayer.replaceAsync(recordedUri);
+      if (cancelled) return;
+      // previewPlayer.play(); // optional
+    } catch {}
+  })();
+  return () => { cancelled = true; };
+}, [recordedUri, previewPlayer]);
+
+
+    // Handle recording video for an attempt (same as MeetForm)
+  async function handleRecordVideo(heightObj, attemptIdx) {
+    // Permissions
+    if (!camPerm?.granted) {
+      const res = await requestCamPerm();
+      if (!res?.granted) {
+        Alert.alert('Permission required', 'Camera access is required.');
+        return;
+      }
+    }
+    if (!micPerm?.granted) {
+      const resMic = await requestMicPerm();
+      if (!resMic?.granted) {
+        Alert.alert('Permission required', 'Microphone access is required.');
+        return;
+      }
+    }
+    setPendingAttempt({ heightObj, attemptIdx });
+    setRecordedUri(null);
+    setShowCamera(true);
+    setIsRecording(false);
+  }
+
+  // Toggle video recording
+  async function onToggleRecord() {
+    if (!cameraReady || !cameraRef.current) {
+      Alert.alert('Camera not ready yet. Please wait a moment.');
+      return;
+    }
+    if (!isRecording) {
+      setIsRecording(true);
+      try {
+        const result = await cameraRef.current.recordAsync();
+        if (result?.uri) setRecordedUri(result.uri);
+      } catch (e) {
+        Alert.alert('Error', `Could not record video:\n${e?.message || e}`);
+      } finally {
+        setIsRecording(false);
+      }
+    } else {
+      try {
+        cameraRef.current.stopRecording();
+      } catch {}
+    }
+  }
+
+  // Save recorded video (PATCH: match MeetForm logic)
+  function onSaveRecorded() {
+    if (!recordedUri || !pendingAttempt) return;
+    const { heightObj, attemptIdx } = pendingAttempt;
+    setHeights(heights =>
+      heights.map(h =>
+        h.id === heightObj.id
+          ? {
+              ...h,
+              attempts: h.attempts.map((a, i) =>
+                i === attemptIdx
+                  ? { ...a, videoUri: recordedUri }
+                  : a
+              ),
+            }
+          : h
+      )
+    );
+    addAttemptVideo(
+      sessionId,
+      heightObj.heightIn,
+      attemptIdx + 1,
+      recordedUri,
+      `Practice Video ${new Date().toLocaleString()}`
+    );
+    setUpdateFlag(flag => flag + 1);
+    setShowCamera(false);
+    setRecordedUri(null);
+    setIsRecording(false);
+    setPendingAttempt(null);
+    Alert.alert('Saved!', 'Video attached to this attempt.');
+  }
+
+  function onDiscardRecorded() {
+    setRecordedUri(null);
+    setIsRecording(false);
+  }
+  function onCloseCamera() {
+    setShowCamera(false);
+    setCameraReady(false);
+    setRecordedUri(null);
+    setIsRecording(false);
+    setPendingAttempt(null);
+  }
+  function openVideoModal(clips, heading) {
+  setVideoModalClips(clips);
+  setVideoModalHeading(heading);
+  setVideoModalOpen(true);
+}
+  const closeVideoModal = () => setVideoModalOpen(false);
 
   // Heights Add UI (same as meetform, requires pole)
   const HeightAddUI =
@@ -1275,7 +1625,7 @@ function PracticeFormScreen({ navigation }) {
   // Save logic
   const save = () => {
     const sess = {
-      id: shortId(),
+      id: sessionId,
       type: 'practice',
       date,
       dayName: dayNameStr,
@@ -1291,8 +1641,14 @@ function PracticeFormScreen({ navigation }) {
   };
 
   return (
+  <KeyboardAvoidingView
+    style={{ flex: 1 }}
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    keyboardVerticalOffset={80} // You can adjust this value for your header/nav height
+  >
     <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 16 }}>
+      <KeyboardAwareScrollView contentContainerStyle={{ flexGrow: 1, padding: 16, paddingBottom: 100 }}
+      keyboardShouldPersistTaps="handled">
         <Section title="New Practice">
           <Field label="Goals for today">
             <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., hit 12' mid, tall at takeoff" style={styles.input} />
@@ -1419,41 +1775,60 @@ function PracticeFormScreen({ navigation }) {
                     ) : (
                       <Text style={styles.muted}>No pole assigned.</Text>
                     )}
+                    {/* PATCH: Enhanced Attempt UI */}
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-                      {h.attempts.map((attempt, attemptIdx) => (
-                        <Pressable
-                          key={attemptIdx}
-                          onPress={() => {
-                            setHeights(heightsArr => heightsArr.map((heightItem, i) =>
-                              i === heightIdx
-                                ? {
-                                    ...heightItem,
-                                    attempts: heightItem.attempts.map((a, j) =>
-                                      j === attemptIdx
-                                        ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
-                                        : a
-                                    )
-                                  }
-                                : heightItem
-                            ));
-                          }}
-                          style={{
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 8,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: attempt.result === 'clear' ? 'green' : 'red',
-                            backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
-                            minWidth: 56,
-                            marginRight: 8,
-                          }}>
-                          <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
-                            {attempt.result === 'clear' ? 'O' : 'X'}
-                          </Text>
-                          <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
-                        </Pressable>
-                      ))}
+                      {h.attempts.map((attempt, attemptIdx) => {
+                        const clips = getAllAttemptVideos(sessionId, h.heightIn, attemptIdx + 1);
+                        return (
+                          <View key={attemptIdx} style={{ marginRight: 16, alignItems: 'center' }}>
+                            <Pressable
+                              onPress={() => {
+                                setHeights(heightsArr => heightsArr.map((heightItem, i) =>
+                                  i === heightIdx
+                                    ? {
+                                        ...heightItem,
+                                        attempts: heightItem.attempts.map((a, j) =>
+                                          j === attemptIdx
+                                            ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
+                                            : a
+                                        )
+                                      }
+                                    : heightItem
+                                ));
+                              }}
+                              style={{
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: 8,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: attempt.result === 'clear' ? 'green' : 'red',
+                                backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
+                                minWidth: 56,
+                                marginBottom: 2,
+                              }}>
+                              <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
+                                {attempt.result === 'clear' ? 'O' : 'X'}
+                              </Text>
+                              <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
+                            </Pressable>
+                            <ButtonSecondary
+                              title="Record Video"
+                              style={{ marginTop: 2, marginBottom: 2, paddingHorizontal: 8 }}
+                              onPress={() => handleRecordVideo(h, attemptIdx)}
+                            />
+                            {clips.length > 0 && (
+                              <ButtonSecondary
+                                 title={`View Video (${clips.length})`}
+                                 onPress={() =>{
+                                  console.log('Clips to modal:', clips);
+                                  openVideoModal(clips, `Attempt Video (${date})`);
+                            }}
+                                />
+                            )}
+                          </View>
+                        );
+                      })}
                     </View>
                   </View>
                 );
@@ -1462,26 +1837,185 @@ function PracticeFormScreen({ navigation }) {
               <Text style={styles.muted}>No heights added yet.</Text>
             )}
           </Section>
+
+          {/* Modals and Notes at the end */}
           <Field label="Notes">
-            <TextInput value={notes} onChangeText={setNotes} placeholder="session notes…" style={[styles.input, { height: 90 }]} multiline />
+            <TextInput value={notes} onChangeText={setNotes} placeholder="session notes…" style={[styles.input, { height: 90 }]} multiline returnKeyType="done" />
           </Field>
           <ButtonPrimary title="Save Practice" onPress={save} />
         </Section>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
-  );
+
+    {/* Camera Modal */}
+    <Modal visible={showCamera} animationType="slide" onRequestClose={onCloseCamera}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {needPermSheet ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', marginBottom: 16 }}>
+              Camera and microphone permission are required.
+            </Text>
+            <View style={{ flexDirection: 'row' }}>
+              <View style={{ marginRight: 12 }}>
+                <ButtonPrimary title="Allow Camera" onPress={requestCamPerm} />
+              </View>
+              <ButtonPrimary title="Allow Microphone" onPress={requestMicPerm} />
+            </View>
+            <View style={{ marginTop: 16 }}>
+              <ButtonSecondary title="Close" onPress={onCloseCamera} />
+            </View>
+          </View>
+        ) : recordedUri ? (
+          <View style={{ flex: 1 }}>
+            <VideoView
+              style={{ flex: 1 }}
+              player={previewPlayer}
+              nativeControls
+              allowsPictureInPicture
+              contentFit="contain"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginVertical: 24 }}>
+              <ButtonPrimary title="Save" onPress={onSaveRecorded} />
+              <ButtonSecondary title="Discard" onPress={onDiscardRecorded} />
+              <ButtonSecondary title="Close" onPress={onCloseCamera} />
+            </View>
+          </View>
+        ) : (
+          <View style={{ flex: 1 }}>
+            <CameraView
+              ref={cameraRef}
+              style={{ flex: 1 }}
+              facing="back"
+              mode="video"
+              enableAudio
+              onCameraReady={() => {
+                setCameraReady(true);
+              }}
+            />
+            <View style={{ position: 'absolute', bottom: 32, width: '100%', alignItems: 'center' }}>
+              <Pressable
+                onPress={() => { onToggleRecord(); }}
+                disabled={!cameraReady}
+                style={{
+                  height: 64,
+                  minWidth: 140,
+                  borderRadius: 999,
+                  backgroundColor: isRecording ? '#ef4444' : '#10b981',
+                  borderWidth: 2,
+                  borderColor: isRecording ? '#ef4444' : '#10b981',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12,
+                  opacity: cameraReady ? 1 : 0.5,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {isRecording ? "Stop" : "Record"}
+                </Text>
+              </Pressable>
+              <View style={{ marginTop: 12 }}>
+                <ButtonSecondary title="Close" onPress={onCloseCamera} />
+              </View>
+            </View>
+          </View>
+        )}
+      </View>
+    </Modal>
+
+    {/* Video Modal */}
+    <Modal visible={videoModalOpen} transparent animationType="slide" onRequestClose={closeVideoModal}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.sectionTitle}>{videoModalHeading}</Text>
+          {videoModalClips.map((clip, idx) => (
+            <View key={idx} style={{ marginBottom: 16 }}>
+              <Text style={styles.fieldLabel}>{clip.title}</Text>
+              <VideoView
+                key={clip.uri}
+                style={{ height: 220, width: '100%', backgroundColor: '#000' }}
+                player={previewPlayer}
+                nativeControls
+                allowsPictureInPicture
+                contentFit="contain"
+              />
+              <ButtonSecondary 
+                title="Delete Video" 
+                onPress={() => {
+                  Alert.alert('Delete video?', 'This cannot be undone.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Delete', 
+                      style: 'destructive', 
+                      onPress: () => {
+                        deleteAttemptVideo(sessionId, clip.heightIn, clip.attemptNumber, clip.id);
+                        setVideoModalClips(clips => clips.filter(c => c.id !== clip.id));
+                        setHeights(heightsArr =>
+                          heightsArr.map(h =>
+                            h.heightIn === clip.heightIn
+                              ? {
+                                  ...h,
+                                  attempts: h.attempts.map((a, idx) =>
+                                    (a.idx === clip.attemptNumber || idx + 1 === clip.attemptNumber)
+                                      ? { ...a, videoUri: undefined, id: undefined }
+                                      : a
+                                  ),
+                                }
+                              : h
+                          )
+                        );
+                      }
+                    },
+                  ]);
+                }}
+                style={{ marginTop: 8 }}
+              />
+            </View>
+          ))}
+          <ButtonSecondary title="Close" onPress={closeVideoModal} style={{ marginTop: 8 }} />
+        </View>
+      </View>
+    </Modal>
+  </KeyboardAvoidingView>
+);
 }
 
 function MeetFormScreen({ navigation }) {
+  const [sessionId] = useState(() => shortId());
+  const previewPlayer = useVideoPlayer(null, (player) => { player.loop = false; });
+    useEffect(() => {
+   (async () => {
+     const uri = videoModalClips?.[0]?.uri || recordedUri;
+     if (videoModalVisible && uri) {
+       try { await previewPlayer.replaceAsync(uri); } catch {}
+     }
+   })();
+ }, [videoModalVisible, videoModalClips, recordedUri, previewPlayer]);
+  const [updateFlag, setUpdateFlag] = useState(0);
+
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [videoModalClips, setVideoModalClips] = useState([]);
+  const [videoModalTitle, setVideoModalTitle] = useState('');
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [videoModalHeading, setVideoModalHeading] = useState(''); 
+
+  const [showCamera, setShowCamera] = useState(false);
   const { units } = usePVStore((s) => s.settings);
+  const [recordedUri, setRecordedUri] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const cameraRef = useRef(null);
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const addAttemptVideo = usePVStore((s) => s.addAttemptVideo);
+  const getAttemptVideos = usePVStore((s) => s.getAttemptVideos);
+  const deleteAttemptVideo = usePVStore((s) => s.deleteAttemptVideo);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [pendingAttempt, setPendingAttempt] = useState(null);
   const add = usePVStore((s) => s.addSession);
   const allSessions = usePVStore((s) => s.sessions);
-
   const [date] = useState(new Date().toISOString());
   const [meetName, setMeetName] = useState('');
   const [goals, setGoals] = useState('');
   const [notes, setNotes] = useState('');
-
   // Heights logic
   const [heights, setHeights] = useState([]);
   const [addHeightFt, setAddHeightFt] = useState('');
@@ -1513,6 +2047,49 @@ function MeetFormScreen({ navigation }) {
   const [poleStandardsModalOpen, setPoleStandardsModalOpen] = useState(false);
   const [poleHandsOpen, setPoleHandsOpen] = useState(false);
   const [editPoleIdx, setEditPoleIdx] = useState(null);
+  
+  // PATCH: getAllAttemptVideos to include unsaved videoUri from heights
+  function getAllAttemptVideos(sessionId, heightIn, attemptNumber) {
+  const persistedClipsRaw = getAttemptVideos(sessionId, heightIn, attemptNumber) || [];
+  // Patch all persisted clips with required fields
+  const persistedClips = persistedClipsRaw.map(c => ({
+    ...c,
+    heightIn: c.heightIn ?? heightIn,
+    attemptNumber: c.attemptNumber ?? attemptNumber,
+    id: c.id ?? `${sessionId}_${heightIn}_${attemptNumber}`,
+  }));
+
+  let unsavedClip = null;
+  for (const h of heights) {
+    if (h.heightIn === heightIn) {
+      const attempt = h.attempts?.[attemptNumber - 1];
+      if (attempt && attempt.videoUri) {
+        unsavedClip = {
+          uri: attempt.videoUri,
+          title: "Just Recorded Video",
+          id: attempt.id ?? `${sessionId}_${heightIn}_${attemptNumber}`,
+          heightIn: h.heightIn,
+          attemptNumber: attempt.idx ?? attemptNumber, // fallback to passed-in attemptNumber
+        };
+      }
+    }
+  }
+
+  if (unsavedClip) {
+    // Patch unsavedClip with all required fields
+    const alreadyIncluded = persistedClips.some(c => c.uri === unsavedClip.uri);
+    const clipsArr = alreadyIncluded ? persistedClips : [unsavedClip, ...persistedClips];
+    // Ensure all clips are patched
+    return clipsArr.map(c => ({
+      ...c,
+      heightIn: c.heightIn ?? heightIn,
+      attemptNumber: c.attemptNumber ?? attemptNumber,
+      id: c.id ?? `${sessionId}_${heightIn}_${attemptNumber}`,
+    }));
+  }
+
+  return persistedClips;
+}
 
   // Previous poles from all sessions (deduplicated)
   const previousPoles = useMemo(() => {
@@ -1570,6 +2147,128 @@ function MeetFormScreen({ navigation }) {
     }
     return arr;
   }, []);
+
+
+
+  
+  // Permission sheet logic
+const needPermSheet =
+  showCamera &&
+  ((!camPerm || camPerm.status !== 'granted') || (!micPerm || micPerm.status !== 'granted'));
+
+// Load freshly recorded clip into preview player (just like VideoScreen.js)
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    if (!recordedUri) return;
+    try {
+      await previewPlayer.replaceAsync(recordedUri);
+      if (cancelled) return;
+      // previewPlayer.play(); // optional
+    } catch {}
+  })();
+  return () => { cancelled = true; };
+}, [recordedUri, previewPlayer]);
+
+// Record/stop logic
+async function handleRecordVideo(heightObj, attemptIdx) {
+    // Permissions
+    if (!camPerm?.granted) {
+      const res = await requestCamPerm();
+      if (!res?.granted) {
+        Alert.alert('Permission required', 'Camera access is required.');
+        return;
+      }
+    }
+    if (!micPerm?.granted) {
+      const resMic = await requestMicPerm();
+      if (!resMic?.granted) {
+        Alert.alert('Permission required', 'Microphone access is required.');
+        return;
+      }
+    }
+    setPendingAttempt({ heightObj, attemptIdx });
+    setRecordedUri(null);
+    setShowCamera(true);
+    setIsRecording(false);
+  }
+
+  async function onToggleRecord() {
+    //console.log("Record button pressed! cameraRef.current:", cameraRef.current);
+  if (!cameraRef.current) {
+    Alert.alert("Camera not ready yet. Please wait a moment.");
+    return;
+  }
+  if (!isRecording) {
+    setIsRecording(true);
+    try {
+      const result = await cameraRef.current.recordAsync();
+      if (result?.uri) setRecordedUri(result.uri);
+    } catch (e) {
+      Alert.alert('Error', `Could not record video:\n${e?.message || e}`);
+    } finally {
+      setIsRecording(false);
+    }
+  } else {
+    try {
+      cameraRef.current.stopRecording();
+    } catch {/* no-op */}
+  }
+}
+
+
+  function onSaveRecorded() {
+  if (!recordedUri || !pendingAttempt) return;
+  const { heightObj, attemptIdx } = pendingAttempt;
+  //console.log('sessionId:', sessionId);
+  //console.log('Saved video URI:', recordedUri);
+  // Save the video URI directly in the unsaved heights array
+  setHeights(heights =>
+    heights.map(h =>
+      h.id === heightObj.id
+        ? {
+            ...h,
+            attempts: h.attempts.map((a, i) =>
+              i === attemptIdx
+                ? { ...a, videoUri: recordedUri }
+                : a
+            ),
+          }
+        : h
+    )
+  );
+  // Optionally, also persist for later via addAttemptVideo
+  addAttemptVideo(
+    sessionId, // PATCH: use sessionId, not date!
+    heightObj.heightIn,
+    attemptIdx + 1,
+    recordedUri,
+    `Meet Video ${new Date().toLocaleString()}`
+  );
+  setUpdateFlag(flag => flag + 1); // force re-render
+  setShowCamera(false);
+  setRecordedUri(null);
+  setIsRecording(false);
+  setPendingAttempt(null);
+  Alert.alert('Saved!', 'Video attached to this attempt.');
+}
+  function onDiscardRecorded() {
+    setRecordedUri(null);
+    setIsRecording(false);
+  }
+  function onCloseCamera() {
+    setShowCamera(false);
+    setCameraReady(false);
+    setRecordedUri(null);
+    setIsRecording(false);
+    setPendingAttempt(null);
+  }
+  function openVideoModal(clips, heading) {
+  setVideoModalClips(clips);
+  setVideoModalHeading(heading);
+  setVideoModalOpen(true);
+}
+const closeVideoModal = () => setVideoModalOpen(false);
 
   // Heights add UI (with pole selector)
   const HeightAddUI =
@@ -1959,7 +2658,7 @@ function MeetFormScreen({ navigation }) {
   // Save logic
   const save = () => {
     const sess = {
-      id: shortId(),
+      id: sessionId, // PATCH: Use generated sessionId
       type: 'meet',
       date,
       meetName: meetName?.trim() || undefined,
@@ -1977,208 +2676,421 @@ function MeetFormScreen({ navigation }) {
     navigation.goBack();
   };
 
-  return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 16, paddingBottom: 48 }}>
-        <Section title="New Meet">
-          <Field label="Meet name">
-            <TextInput value={meetName} onChangeText={setMeetName} placeholder="e.g., Conference Finals" style={styles.input} />
-          </Field>
-          <Field label="Goals">
-            <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., open @ 11'6, PR attempt 12'6" style={styles.input} />
-          </Field>
-          <Section title="Poles">
-            {poles.length === 0 ? (
-              <Text style={styles.muted}>No poles added yet.</Text>
-            ) : (
-              <>
-                {poles.map((pole, idx) => (
-  <View key={idx} style={{ marginBottom: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#eee' }}>
-    {/* Brand & Length on the same line */}
-    <Row style={{ gap: 14 }}>
-      <Text style={styles.pText}>
-        {pole.brand ? `Brand: ${pole.brand}` : ''}
-        {pole.length ? `   Length: ${pole.length}` : ''}
-      </Text>
-    </Row>
-    {/* Flex & Weight on the same line */}
-    <Row style={{ gap: 14 }}>
-      <Text style={styles.pText}>
-        {pole.flex ? `Flex: ${pole.flex}` : ''}
-        {pole.weight ? `   Weight: ${pole.weight}` : ''}
-      </Text>
-    </Row>
-    {/* Setup - unchanged */}
-    <Text style={styles.muted}>
-      Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
-    </Text>
-    <Row style={{ justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-      <ButtonSecondary
-        title="Edit"
-        onPress={() => {
-          // ...edit logic...
-        }}
-        style={{ marginBottom: 4 }}
-      />
-      <ButtonSecondary
-        title="Remove"
-        onPress={() => {
-          // ...remove logic...
-        }}
-      />
-    </Row>
-  </View>
-))}
-              </>
-            )}
-            <ButtonPrimary title="Add Pole" onPress={() => {
-              setEditPoleIdx(null);
-              setPoleBrand('');
-              setPoleLength('');
-              setPoleFlex('');
-              setPoleWeight('');
-              setPoleSteps('');
-              setPoleApproachFeet('');
-              setPoleApproachInches('');
-              setPoleTakeoffIn('');
-              setPoleStandardsIn('');
-              setPoleHands('');
-              setPoleModalOpen(true);
-            }} style={{ alignSelf: 'flex-start', marginTop: 4 }} />
-          </Section>
-          {PoleModal}
-          <Section title="Heights & Attempts">
-            <Text style={[styles.muted, { marginBottom: 8 }]}>Add multiple heights for this meet. Each height has 3 attempts and must be assigned a pole.</Text>
-            {HeightAddUI}
-           {heights.length ? (
-  heights.map((h, heightIdx) => {
-    const pole = h.poleIdx !== undefined && poles[h.poleIdx] ? poles[h.poleIdx] : null;
-    return (
-      <View key={h.id} style={styles.cardRow}>
-        <Text style={styles.fieldLabel}>Height</Text>
-        <Text style={styles.pText}>{fmtBar(h.heightIn, units)}</Text>
+ return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={80}
+    >
+      <SafeAreaView style={{ flex: 1 }}>
+        <KeyboardAwareScrollView
+          contentContainerStyle={{ flexGrow: 1, padding: 16, paddingBottom: 100 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Section title="New Meet">
+            <Field label="Meet name">
+              <TextInput value={meetName} onChangeText={setMeetName} placeholder="e.g., Conference Finals" style={styles.input} />
+            </Field>
+            <Field label="Goals">
+              <TextInput value={goals} onChangeText={setGoals} placeholder="e.g., open @ 11'6, PR attempt 12'6" style={styles.input} />
+            </Field>
+            <Section title="Poles">
+              {poles.length === 0 ? (
+                <Text style={styles.muted}>No poles added yet.</Text>
+              ) : (
+                <>
+                  {poles.map((pole, idx) => (
+                    <View key={idx} style={{ marginBottom: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#eee' }}>
+                      <Row style={{ gap: 14 }}>
+                        <Text style={styles.pText}>
+                          {pole.brand ? `Brand: ${pole.brand}` : ''}
+                          {pole.length ? `   Length: ${pole.length}` : ''}
+                        </Text>
+                      </Row>
+                      <Row style={{ gap: 14 }}>
+                        <Text style={styles.pText}>
+                          {pole.flex ? `Flex: ${pole.flex}` : ''}
+                          {pole.weight ? `   Weight: ${pole.weight}` : ''}
+                        </Text>
+                      </Row>
+                      <Text style={styles.muted}>
+                        Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet)*12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
+                      </Text>
+                      <Row style={{ justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                        <ButtonSecondary
+                          title="Edit"
+                          onPress={() => { /* ...edit logic... */ }}
+                          style={{ marginBottom: 4 }}
+                        />
+                        <ButtonSecondary
+                          title="Remove"
+                          onPress={() => { /* ...remove logic... */ }}
+                        />
+                      </Row>
+                    </View>
+                  ))}
+                </>
+              )}
+              <ButtonPrimary title="Add Pole" onPress={() => {
+                setEditPoleIdx(null);
+                setPoleBrand('');
+                setPoleLength('');
+                setPoleFlex('');
+                setPoleWeight('');
+                setPoleSteps('');
+                setPoleApproachFeet('');
+                setPoleApproachInches('');
+                setPoleTakeoffIn('');
+                setPoleStandardsIn('');
+                setPoleHands('');
+                setPoleModalOpen(true);
+              }} style={{ alignSelf: 'flex-start', marginTop: 4 }} />
+            </Section>
+            {PoleModal}
+            <Section title="Heights & Attempts">
+              <Text style={[styles.muted, { marginBottom: 8 }]}>Add multiple heights for this meet. Each height has 3 attempts and must be assigned a pole.</Text>
+              {HeightAddUI}
+              {heights.length ? (
+                heights.map((h, heightIdx) => {
+                  const pole = h.poleIdx !== undefined && poles[h.poleIdx] ? poles[h.poleIdx] : null;
+                  return (
+                    <View key={h.id} style={styles.cardRow}>
+                      <Text style={styles.fieldLabel}>Height</Text>
+                      <Text style={styles.pText}>{fmtBar(h.heightIn, units)}</Text>
+                      {pole ? (
+                        <View style={{ marginBottom: 6 }}>
+                          <Text style={styles.fieldLabel}>Pole Used</Text>
+                          <Row style={{ gap: 14 }}>
+                            <Text style={styles.pText}>
+                              {pole.brand ? `Brand: ${pole.brand}` : ''}
+                              {pole.length ? `   Length: ${pole.length}` : ''}
+                            </Text>
+                          </Row>
+                          <Row style={{ gap: 14 }}>
+                            <Text style={styles.pText}>
+                              {pole.flex ? `Flex: ${pole.flex}` : ''}
+                              {pole.weight ? `   Weight: ${pole.weight}` : ''}
+                            </Text>
+                          </Row>
+                          <Text style={styles.muted}>
+                            Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet) * 12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.muted}>No pole assigned.</Text>
+                      )}
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+                        {h.attempts.map((attempt, attemptIdx) => {
+                          const clips = getAllAttemptVideos(sessionId, h.heightIn, attemptIdx + 1);
+                          return (
+                            <View key={attemptIdx} style={{ marginRight: 16, alignItems: 'center' }}>
+                              <Pressable
+                                onPress={() => {
+                                  setHeights(heightsArr => heightsArr.map((heightItem, i) =>
+                                    i === heightIdx
+                                      ? {
+                                          ...heightItem,
+                                          attempts: heightItem.attempts.map((a, j) =>
+                                            j === attemptIdx
+                                              ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
+                                              : a
+                                          )
+                                        }
+                                      : heightItem
+                                  ));
+                                }}
+                                style={{
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  padding: 8,
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: attempt.result === 'clear' ? 'green' : 'red',
+                                  backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
+                                  minWidth: 56,
+                                  marginBottom: 2,
+                                }}>
+                                <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
+                                  {attempt.result === 'clear' ? 'O' : 'X'}
+                                </Text>
+                                <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
+                              </Pressable>
+                              <ButtonSecondary
+                                title="Record Video"
+                                style={{ marginTop: 2, marginBottom: 2, paddingHorizontal: 8 }}
+                                onPress={() => handleRecordVideo(h, attemptIdx)}
+                              />
+                              {clips.length > 0 && (
+                                <ButtonSecondary
+                                  title={`View Video (${clips.length})`}
+                                  onPress={() => openVideoModal(clips, `Attempt Video (${date})`)}
+                                />
+                              )}
+                            </View>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text style={styles.muted}>No heights added yet.</Text>
+              )}
+            </Section>
 
-        {/* POLE INFO */}
-        {pole ? (
-          <View style={{ marginBottom: 6 }}>
-            <Text style={styles.fieldLabel}>Pole Used</Text>
-            <Row style={{ gap: 14 }}>
-              <Text style={styles.pText}>
-                {pole.brand ? `Brand: ${pole.brand}` : ''}
-                {pole.length ? `   Length: ${pole.length}` : ''}
-              </Text>
-            </Row>
-            <Row style={{ gap: 14 }}>
-              <Text style={styles.pText}>
-                {pole.flex ? `Flex: ${pole.flex}` : ''}
-                {pole.weight ? `   Weight: ${pole.weight}` : ''}
-              </Text>
-            </Row>
-            <Text style={styles.muted}>
-              Setup: Steps {pole.steps ?? '—'}, Approach {fmtFeetIn(Number(pole.approachFeet) * 12 + Number(pole.approachInches))}, Takeoff {fmtTakeoff(pole.takeoffIn, units)}, Standards {fmtStandards(pole.standardsIn, units)}, Hands: {pole.hands ?? '—'}
+            <Field label="Notes">
+              <TextInput
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="session notes…"
+                style={[styles.input, { height: 90 }]}
+                multiline
+                returnKeyType="done"
+              />
+            </Field>
+            <ButtonPrimary title="Save Meet" onPress={save} />
+          </Section>
+        </KeyboardAwareScrollView>
+      </SafeAreaView>
+          
+          
+
+        {/* Camera Modal */}
+    <Modal visible={showCamera} animationType="slide" onRequestClose={onCloseCamera}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {needPermSheet ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', marginBottom: 16 }}>
+              Camera and microphone permission are required.
             </Text>
+            <View style={{ flexDirection: 'row' }}>
+              <View style={{ marginRight: 12 }}>
+                <ButtonPrimary title="Allow Camera" onPress={requestCamPerm} />
+              </View>
+              <ButtonPrimary title="Allow Microphone" onPress={requestMicPerm} />
+            </View>
+            <View style={{ marginTop: 16 }}>
+              <ButtonSecondary title="Close" onPress={onCloseCamera} />
+            </View>
+          </View>
+        ) : recordedUri ? (
+          <View style={{ flex: 1 }}>
+            <VideoView
+              style={{ flex: 1 }}
+              player={previewPlayer}
+              nativeControls
+              allowsPictureInPicture
+              contentFit="contain"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginVertical: 24 }}>
+              <ButtonPrimary title="Save" onPress={onSaveRecorded} />
+              <ButtonSecondary title="Discard" onPress={onDiscardRecorded} />
+              <ButtonSecondary title="Close" onPress={onCloseCamera} />
+            </View>
           </View>
         ) : (
-          <Text style={styles.muted}>No pole assigned.</Text>
-        )}
-        {/* ATTEMPTS UI */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-          {h.attempts.map((attempt, attemptIdx) => (
-            <Pressable
-              key={attemptIdx}
-              onPress={() => {
-                setHeights(heightsArr => heightsArr.map((heightItem, i) =>
-                  i === heightIdx
-                    ? {
-                        ...heightItem,
-                        attempts: heightItem.attempts.map((a, j) =>
-                          j === attemptIdx
-                            ? { ...a, result: a.result === 'clear' ? 'miss' : 'clear' }
-                            : a
-                        )
-                      }
-                    : heightItem
-                ));
+          <View style={{ flex: 1 }}>
+            <CameraView
+              ref={cameraRef}
+              style={{ flex: 1 }}
+              facing="back"
+              mode="video"
+              enableAudio
+              onCameraReady={() => {
+                setCameraReady(true);
               }}
-              style={{
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 8,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: attempt.result === 'clear' ? 'green' : 'red',
-                backgroundColor: attempt.result === 'clear' ? '#e6ffe6' : '#ffe6e6',
-                minWidth: 56,
-                marginRight: 8,
-              }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: attempt.result === 'clear' ? 'green' : 'red' }}>
-                {attempt.result === 'clear' ? 'O' : 'X'}
-              </Text>
-              <Text style={{ fontSize: 12 }}>{attempt.idx}</Text>
-            </Pressable>
+            />
+            <View style={{ position: 'absolute', bottom: 32, width: '100%', alignItems: 'center' }}>
+              <Pressable
+                onPress={() => { onToggleRecord(); }}
+                disabled={!cameraReady}
+                style={{
+                  height: 64,
+                  minWidth: 140,
+                  borderRadius: 999,
+                  backgroundColor: isRecording ? '#ef4444' : '#10b981',
+                  borderWidth: 2,
+                  borderColor: isRecording ? '#ef4444' : '#10b981',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12,
+                  opacity: cameraReady ? 1 : 0.5,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {isRecording ? "Stop" : "Record"}
+                </Text>
+              </Pressable>
+              <View style={{ marginTop: 12 }}>
+                <ButtonSecondary title="Close" onPress={onCloseCamera} />
+              </View>
+            </View>
+          </View>
+        )}
+      </View>
+    </Modal>
+
+    {/* Video Modal */}
+    <Modal visible={videoModalOpen} transparent animationType="slide" onRequestClose={closeVideoModal}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.sectionTitle}>{videoModalHeading}</Text>
+          {videoModalClips.map((clip, idx) => (
+            <View key={idx} style={{ marginBottom: 16 }}>
+              <Text style={styles.fieldLabel}>{clip.title}</Text>
+              <VideoView
+                key={clip.uri}
+                style={{ height: 220, width: '100%', backgroundColor: '#000' }}
+                player={previewPlayer}
+                nativeControls
+                allowsPictureInPicture
+                contentFit="contain"
+              />
+              <ButtonSecondary 
+                title="Delete Video" 
+                onPress={() => {
+                  Alert.alert('Delete video?', 'This cannot be undone.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Delete', 
+                      style: 'destructive', 
+                      onPress: () => {
+                        deleteAttemptVideo(sessionId, clip.heightIn, clip.attemptNumber, clip.id);
+                        setVideoModalClips(clips => clips.filter(c => c.id !== clip.id));
+                        setHeights(heightsArr =>
+                          heightsArr.map(h =>
+                            h.heightIn === clip.heightIn
+                              ? {
+                                  ...h,
+                                  attempts: h.attempts.map((a, idx) =>
+                                    (a.idx === clip.attemptNumber || idx + 1 === clip.attemptNumber)
+                                      ? { ...a, videoUri: undefined, id: undefined }
+                                      : a
+                                  ),
+                                }
+                              : h
+                          )
+                        );
+                      }
+                    },
+                  ]);
+                }}
+                style={{ marginTop: 8 }}
+              />
+            </View>
           ))}
+          <ButtonSecondary title="Close" onPress={closeVideoModal} style={{ marginTop: 8 }} />
         </View>
       </View>
-    );
-  })
-) : (
-  <Text style={styles.muted}>No heights added yet.</Text>
-)}
-          </Section>
-          <Field label="Notes">
-            <TextInput value={notes} onChangeText={setNotes} placeholder="meet notes…" style={[styles.input, { height: 90 }]} multiline />
-          </Field>
-          <ButtonPrimary title="Save Meet" onPress={save} />
-        </Section>
-      </ScrollView>
-    </SafeAreaView>
-  );
+    </Modal>
+  </KeyboardAvoidingView>
+);
 }
 
 
 // PLAN: read-only (no editing, uses code-defined plan)
+const sampleTxtPlan = `
+Monday
+Goals: Vault day
+Routine:
+- Warmup
+- Drills
+
+Tuesday
+Goals: Sprint day
+Routine:
+- Sprints
+- Core
+
+Wednesday
+Goals: Rest
+Routine:
+- Recovery jog
+- Stretch
+
+Thursday
+Goals: Technique
+Routine:
+- Pole runs
+- Plant drill
+
+Friday
+Goals: Strength
+Routine:
+- Lifting
+- Plyometrics
+
+Saturday
+Goals: Competition
+Routine:
+- Meet
+
+Sunday
+Goals: Rest
+Routine:
+- Easy jog
+`.trim();
+
+// --- Validate plan format (same as your existing logic) ---
+function validatePlanFile(json) {
+  if (typeof json !== 'object' || !json) return false;
+  const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  for (const d of days) {
+    if (!json[d] || typeof json[d] !== 'object') return false;
+    if (!Array.isArray(json[d].routine)) return false;
+    if (typeof json[d].goals !== 'string') return false;
+  }
+  return true;
+}
+
 function PlanScreen() {
   const plan = usePVStore((s) => s.weeklyPlan);
   const planOverridden = usePVStore((s) => s.settings.planOverridden);
   const setWeeklyPlan = usePVStore((s) => s.setWeeklyPlan);
   const resetWeeklyPlan = usePVStore((s) => s.resetWeeklyPlan);
-  const [activeDay, setActiveDay] = useState(todayName());
+  const [activeDay, setActiveDay] = useState('Monday');
   const [uploading, setUploading] = useState(false);
-  //console.log("Plan from store:", plan);
 
-  // Validate plan format (must match shape of defaultWeeklyPlan)
-  function validatePlanFile(json) {
-    if (typeof json !== 'object' || !json) return false;
-    for (const d of days) {
-      if (!json[d] || typeof json[d] !== 'object') return false;
-      if (!Array.isArray(json[d].routine)) return false;
-      if (typeof json[d].goals !== 'string') return false;
-    }
-    return true;
+  // --- Download example .txt plan ---
+  async function handleDownloadSampleTxt() {
+  try {
+    console.log('Download button pressed!');
+    const fileUri = FileSystem.documentDirectory + 'example_plan.txt';
+    const file = FileSystem.getFileForUri(fileUri);
+    await file.writeString(sampleTxtPlan);
+    console.log('File written to:', fileUri);
+    await Sharing.shareAsync(fileUri, { mimeType: 'text/plain' });
+    console.log('Share sheet opened');
+  } catch (e) {
+    console.error('Error sharing file:', e);
+    alert('Failed to share file: ' + (e.message || e));
   }
-
-  // Handle upload
+}
+  // --- Upload plan: supports .json and .txt ---
   async function handleUpload() {
     setUploading(true);
     try {
       const res = await DocumentPicker.getDocumentAsync({
-        type: 'application/json',
+        type: ['application/json', 'text/plain'],
         copyToCacheDirectory: true,
         multiple: false,
       });
       if (res.type === 'success') {
         const fileUri = res.assets?.[0]?.uri || res.uri;
-        const content = await fetch(fileUri).then((r) => r.text());
+        const file = FileSystem.getFileForUri(fileUri);
+        const content = await file.readString();
         let parsed;
-        try {
+        if (res.name.endsWith('.json')) {
           parsed = JSON.parse(content);
-        } catch (err) {
-          Alert.alert('Error', 'Uploaded file is not valid JSON.');
+        } else if (res.name.endsWith('.txt')) {
+          parsed = parseTextPlan(content); // Use your helper!
+        } else {
+          Alert.alert('Error', 'Unsupported file type.');
           setUploading(false);
           return;
         }
         if (!validatePlanFile(parsed)) {
-          Alert.alert('Error', 'Plan file format is not valid. Must match week plan structure.');
+          Alert.alert('Error', 'Plan file format is not valid.');
           setUploading(false);
           return;
         }
@@ -2191,11 +3103,12 @@ function PlanScreen() {
     setUploading(false);
   }
 
-  // Entry for selected day
+  // --- UI ---
+  const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const entry = plan[activeDay] || { goals: '', routine: [] };
 
   return (
-    <Screen>
+    <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 16, paddingBottom: 40 }}>
       <Section title="Weekly Practice Plan">
         <Row style={{ flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
           {days.map((d) => (
@@ -2211,24 +3124,22 @@ function PlanScreen() {
           {entry.routine.length ? (
             <View style={{ gap: 6 }}>
               {entry.routine.map((r, i) =>
-                isRoutineHeader(r) ? (
-                  <Text key={i} style={{ fontWeight: '800', fontSize: 16, marginTop: 6 }}>
-                    {String(r).replace(/:$/, '')}
-                  </Text>
-                ) : (
-                  <Text key={i} style={styles.pText}>• {r}</Text>
-                )
+                <Text key={i} style={styles.pText}>• {r}</Text>
               )}
             </View>
           ) : <Text style={styles.muted}>No routine items.</Text>}
         </Field>
       </Section>
       <Section title="Plan File">
-        <Row style={{ gap: 8 }}>
+        <Row style={{ gap: 8, flexWrap: 'wrap' }}>
           <ButtonPrimary
             title={planOverridden ? 'Re-upload Plan' : 'Upload Plan File'}
             onPress={handleUpload}
             disabled={uploading}
+          />
+          <ButtonSecondary
+            title="Download Example .txt Plan"
+            onPress={handleDownloadSampleTxt}
           />
           {planOverridden && (
             <ButtonSecondary
@@ -2243,14 +3154,27 @@ function PlanScreen() {
           )}
         </Row>
         <Text style={[styles.muted, { marginTop: 8 }]}>
+          {"Example .txt file format:\n"}
+          <Text style={{ fontFamily: 'monospace' }}>
+            {`Monday
+Goals: Vault day
+Routine:
+- Warmup
+- Drills
+`}
+          </Text>
+          {"...repeat for each day."}
+        </Text>
+        <Text style={[styles.muted, { marginTop: 8 }]}>
           {planOverridden
             ? 'Custom plan loaded from file. You can re-upload or reset.'
-            : 'You can upload a custom plan file (JSON) to override the weekly practice plan.'}
+            : 'You can upload a custom plan file (.json or .txt) to override the weekly practice plan.'}
         </Text>
       </Section>
-    </Screen>
+    </ScrollView>
   );
 }
+
 function StatsScreen() {
   const sessions = usePVStore((s) => s.sessions);
   const { units, athlete } = usePVStore((s) => s.settings);
@@ -2383,7 +3307,6 @@ const TabNav = () => (
     <Tab.Screen name="Video" component={VideoScreen} />
     <Tab.Screen name="Log" component={LogScreen} />
     <Tab.Screen name="Plan" component={PlanScreen} />
-    <Tab.Screen name="Stats" component={StatsScreen} />
     <Tab.Screen name="Settings" component={SettingsScreen} />
   </Tab.Navigator>
 );
